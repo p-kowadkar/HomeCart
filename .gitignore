@@ -16,6 +16,14 @@ build/
 **/.env*
 !**/.env.example
 
+# Virtual environments
+venv/
+env/
+.venv/
+**/venv/
+**/env/
+**/.venv/
+
 # Project specific
 ui-design/
 ui-designs/
@@ -24,3 +32,5 @@ initial-prd.txt
 # Frontend specific (if not handled by app/frontend/.gitignore)
 .expo/
 web-build/
+
+app/backend/.env
