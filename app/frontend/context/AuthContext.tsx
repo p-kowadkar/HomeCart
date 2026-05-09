@@ -58,7 +58,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (error.code !== 'PGRST116') { // PGRST116 is "no rows returned"
           console.error('Profile fetch error:', error);
         }
-        setProfile(null);
+        // Use {} instead of null so App.tsx can distinguish "loaded but no profile"
+        // from "still loading" (undefined). !profile?.onboarding_completed stays truthy
+        // for {}, routing the user through onboarding correctly.
+        setProfile({});
       } else {
         setProfile(data);
       }
