@@ -1,10 +1,14 @@
 import React from 'react';
 import { StyleSheet, View, ActivityIndicator } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
+import { DarkTheme as NavDarkTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ThemeProvider, useTheme } from './theme/ThemeContext';
+import { darkColors } from './theme/colors';
 import AuthScreen from './screens/AuthScreen';
 import OnboardingScreen from './screens/OnboardingScreen';
 import HomeScreen from './screens/HomeScreen';
@@ -13,9 +17,24 @@ import ListScreen from './screens/ListScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import MagicLensScreen from './screens/MagicLensScreen';
 
+// Navigation theme wired to dark palette
+const navTheme = {
+  ...NavDarkTheme,
+  colors: {
+    ...NavDarkTheme.colors,
+    background: darkColors.bg,
+    card: darkColors.surface,
+    text: darkColors.textPrimary,
+    border: darkColors.border,
+    primary: darkColors.primary,
+    notification: darkColors.cultural,
+  },
+};
+
 const Tab = createBottomTabNavigator();
 
 function MainTabNavigator() {
+  const { colors } = useTheme();
   return (
     <Tab.Navigator
       screenOptions={{
@@ -23,72 +42,67 @@ function MainTabNavigator() {
           height: 90,
           paddingBottom: 30,
           paddingTop: 10,
-          borderTopWidth: 0,
+          borderTopWidth: 1,
+          borderTopColor: colors.border,
           elevation: 0,
-          backgroundColor: '#ffffff',
+          backgroundColor: colors.surface,
         },
-        tabBarActiveTintColor: '#3B82F6',
-        tabBarInactiveTintColor: '#94A3B8',
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.textTertiary,
         headerShown: false,
       }}
     >
-      <Tab.Screen 
-        name="Home" 
-        component={HomeScreen} 
+      <Tab.Screen
+        name="Home"
+        component={HomeScreen}
         options={{
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="home-variant" size={size} color={color} />
           ),
         }}
       />
-      <Tab.Screen 
-        name="Map" 
-        component={MapScreen} 
+      <Tab.Screen
+        name="Map"
+        component={MapScreen}
         options={{
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="map-marker-radius" size={size} color={color} />
           ),
         }}
       />
-      <Tab.Screen 
-        name="MagicLens" 
-        component={MagicLensScreen} 
+      <Tab.Screen
+        name="MagicLens"
+        component={MagicLensScreen}
         options={{
           tabBarLabel: () => null,
           tabBarIcon: ({ focused }) => (
             <View style={{
-              width: 64,
-              height: 64,
-              borderRadius: 32,
-              backgroundColor: '#3B82F6',
-              justifyContent: 'center',
-              alignItems: 'center',
+              width: 64, height: 64, borderRadius: 32,
+              backgroundColor: darkColors.primary,
+              justifyContent: 'center', alignItems: 'center',
               marginBottom: 30,
-              borderWidth: 4,
-              borderColor: '#fff',
-              shadowColor: '#3B82F6',
+              borderWidth: 4, borderColor: darkColors.surface,
+              shadowColor: darkColors.primary,
               shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.3,
-              shadowRadius: 8,
-              elevation: 5,
+              shadowOpacity: 0.4, shadowRadius: 8, elevation: 5,
             }}>
               <MaterialCommunityIcons name="scan-helper" size={32} color="#fff" />
             </View>
           ),
         }}
       />
-      <Tab.Screen 
-        name="List" 
-        component={ListScreen} 
+      <Tab.Screen
+        name="List"
+        component={ListScreen}
         options={{
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="clipboard-list" size={size} color={color} />
           ),
         }}
       />
-      <Tab.Screen 
-        name="Profile" 
-        component={ProfileScreen} 
+      <Tab.Screen
+        name="Profile"
+        component={ProfileScreen}
         options={{
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="account" size={size} color={color} />
@@ -101,11 +115,12 @@ function MainTabNavigator() {
 
 function AppContent() {
   const { user, profile, loading } = useAuth();
+  const { colors } = useTheme();
 
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#3B82F6" />
+      <View style={[styles.centered, { backgroundColor: colors.bg }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
@@ -116,8 +131,8 @@ function AppContent() {
 
   if (profile === undefined) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#3B82F6" />
+      <View style={[styles.centered, { backgroundColor: colors.bg }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
@@ -127,7 +142,7 @@ function AppContent() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer theme={navTheme}>
       <MainTabNavigator />
     </NavigationContainer>
   );
@@ -136,42 +151,14 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <ThemeProvider>
+        <StatusBar style="light" />
+        <AppContent />
+      </ThemeProvider>
     </AuthProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#64748B',
-    marginBottom: 32,
-  },
-  button: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    backgroundColor: '#EF4444',
-    borderRadius: 8,
-  },
-  buttonText: {
-    color: '#fff',
-    fontWeight: '600',
-  },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 });
