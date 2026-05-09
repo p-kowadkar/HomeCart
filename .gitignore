@@ -1,0 +1,26 @@
+# IDEs and OS
+.DS_Store
+.vscode/
+.idea/
+
+# General ignores
+node_modules/
+dist/
+build/
+*.log
+
+# Sensitive info - Global patterns for all subfolders
+.env
+.env*
+**/.env
+**/.env*
+!**/.env.example
+
+# Project specific
+ui-design/
+ui-designs/
+initial-prd.txt
+
+# Frontend specific (if not handled by app/frontend/.gitignore)
+.expo/
+web-build/
