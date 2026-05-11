@@ -162,12 +162,12 @@ async def health():
     return {"status": "healthy"}
 
 
-@app.get("/healthz")
+@app.api_route("/healthz", methods=["GET", "HEAD"])
 async def healthz():
     """Lightweight liveness probe for UptimeRobot keep-alive pings.
 
-    Deliberately does no DB / LLM / Places work — just returns a 200 so that
-    Render's free tier never considers us idle. Safe to hit every 5 minutes.
+    HEAD is included because UptimeRobot's free tier can only send HEAD
+    requests — FastAPI doesn't auto-handle HEAD on @app.get routes.
     """
     return {"ok": True}
 
