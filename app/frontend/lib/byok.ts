@@ -10,6 +10,9 @@ export type LLMProvider = 'openrouter' | 'openai' | 'anthropic' | 'auto';
 
 export interface ByokKeys {
   llmKey?: string;
+  llmProvider?: LLMProvider;      // explicit override; falls back to auto-detect from key prefix
+  llmVisionModel?: string;        // e.g. "openai/gpt-5.4-nano" (OpenRouter) or "gpt-5.4-nano" (OpenAI direct)
+  llmTextModel?: string;          // e.g. "deepseek/deepseek-v4-flash"
   gcpKey?: string;
   tavilyKey?: string;
   firecrawlKey?: string;
@@ -17,24 +20,22 @@ export interface ByokKeys {
 
 const KEY_NAMES = {
   llmKey: 'byok_llm_key',
+  llmProvider: 'byok_llm_provider',
+  llmVisionModel: 'byok_llm_vision_model',
+  llmTextModel: 'byok_llm_text_model',
   gcpKey: 'byok_gcp_key',
   tavilyKey: 'byok_tavily_key',
   firecrawlKey: 'byok_firecrawl_key',
 } as const;
 
 export async function loadByokKeys(): Promise<ByokKeys> {
-  const [llmKey, gcpKey, tavilyKey, firecrawlKey] = await Promise.all([
-    SecureStore.getItemAsync(KEY_NAMES.llmKey),
-    SecureStore.getItemAsync(KEY_NAMES.gcpKey),
-    SecureStore.getItemAsync(KEY_NAMES.tavilyKey),
-    SecureStore.getItemAsync(KEY_NAMES.firecrawlKey),
-  ]);
-  return {
-    llmKey: llmKey || undefined,
-    gcpKey: gcpKey || undefined,
-    tavilyKey: tavilyKey || undefined,
-    firecrawlKey: firecrawlKey || undefined,
-  };
+  const entries = await Promise.all(
+    (Object.entries(KEY_NAMES) as [keyof ByokKeys, string][]).map(async ([k, name]) => {
+      const v = await SecureStore.getItemAsync(name);
+      return [k, v || undefined] as const;
+    }),
+  );
+  return Object.fromEntries(entries) as ByokKeys;
 }
 
 export async function saveByokKeys(keys: ByokKeys): Promise<void> {
@@ -66,6 +67,12 @@ export function detectLLMProvider(key?: string): LLMProvider {
   if (key.startsWith('sk-or-')) return 'openrouter';
   if (key.startsWith('sk-')) return 'openai';
   return 'openrouter';
+}
+
+// Resolve the effective provider — user's explicit override wins, otherwise auto-detect.
+export function resolveProvider(keys: ByokKeys): LLMProvider {
+  if (keys.llmProvider && keys.llmProvider !== 'auto') return keys.llmProvider;
+  return detectLLMProvider(keys.llmKey);
 }
 
 export function providerDisplayName(p: LLMProvider): string {

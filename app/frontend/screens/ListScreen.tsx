@@ -54,6 +54,18 @@ export default function ListScreen({ navigation, route }: { navigation?: any; ro
           },
         }),
       });
+      if (r.status === 429) {
+        const body = await r.json().catch(() => ({}));
+        const detail = body?.detail || {};
+        Alert.alert(
+          'Daily limit reached',
+          detail.message ||
+            `You've used your ${detail.limit || 3} free recipe imports today. ` +
+            'Open the Profile tab → Settings to add your own LLM key for unlimited use.',
+          [{ text: 'Got it' }],
+        );
+        return;
+      }
       if (!r.ok) throw new Error(await r.text());
       const data = await r.json();
       setIngredients(data.ingredients || []);

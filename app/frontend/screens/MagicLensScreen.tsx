@@ -85,6 +85,18 @@ export default function MagicLensScreen({ navigation }: { navigation?: any }) {
         }),
       });
 
+      if (response.status === 429) {
+        const body = await response.json().catch(() => ({}));
+        const detail = body?.detail || {};
+        Alert.alert(
+          'Daily limit reached',
+          detail.message ||
+            `You've used your ${detail.limit || 10} free scans today. ` +
+            'Open the Profile tab → Settings to add your own LLM key for unlimited use.',
+          [{ text: 'Got it' }],
+        );
+        return;
+      }
       if (!response.ok) {
         const errText = await response.text();
         throw new Error(`API error: ${errText}`);

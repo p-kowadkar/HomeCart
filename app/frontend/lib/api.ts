@@ -1,27 +1,70 @@
-// HTTP client wrapper that attaches BYOK headers to every backend call.
+// HTTP client wrapper that attaches BYOK + identity headers to every backend call.
 // Reads keys from SecureStore at request time so a user's "Save" in Settings
 // takes effect on the very next API call without a reload.
 
 import { loadByokKeys } from './byok';
+import { supabase } from './supabase';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 
+// Thrown when the backend returns 429 with quota_exceeded. UI should catch this,
+// show a friendly modal, and deep-link the user into Settings to add a BYOK key.
+export class QuotaExceededError extends Error {
+  kind: 'scan' | 'recipe';
+  used: number;
+  limit: number;
+  resetAt: string;
+  suggestBYOK: boolean;
+
+  constructor(detail: any) {
+    super(detail?.message || 'Daily quota exceeded');
+    this.name = 'QuotaExceededError';
+    this.kind = detail?.kind || 'scan';
+    this.used = detail?.used || 0;
+    this.limit = detail?.limit || 0;
+    this.resetAt = detail?.reset_at || '';
+    this.suggestBYOK = !!detail?.suggest_byok;
+  }
+}
+
 export async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
-  const keys = await loadByokKeys();
-  const byokHeaders: Record<string, string> = {};
-  if (keys.llmKey) byokHeaders['X-User-LLM-Key'] = keys.llmKey;
-  if (keys.gcpKey) byokHeaders['X-User-GCP-Key'] = keys.gcpKey;
-  if (keys.tavilyKey) byokHeaders['X-User-Tavily-Key'] = keys.tavilyKey;
-  if (keys.firecrawlKey) byokHeaders['X-User-Firecrawl-Key'] = keys.firecrawlKey;
+  const [keys, sessionRes] = await Promise.all([
+    loadByokKeys(),
+    supabase.auth.getSession(),
+  ]);
+
+  const userId = sessionRes.data.session?.user?.id;
+
+  const headers: Record<string, string> = { 'Bypass-Tunnel-Reminder': '1' };
+  if (keys.llmKey) headers['X-User-LLM-Key'] = keys.llmKey;
+  if (keys.llmVisionModel) headers['X-User-LLM-Vision-Model'] = keys.llmVisionModel;
+  if (keys.llmTextModel) headers['X-User-LLM-Text-Model'] = keys.llmTextModel;
+  if (keys.gcpKey) headers['X-User-GCP-Key'] = keys.gcpKey;
+  if (keys.tavilyKey) headers['X-User-Tavily-Key'] = keys.tavilyKey;
+  if (keys.firecrawlKey) headers['X-User-Firecrawl-Key'] = keys.firecrawlKey;
+  if (userId) headers['X-User-Id'] = userId;
 
   return fetch(`${API_URL}${path}`, {
     ...options,
-    headers: {
-      'Bypass-Tunnel-Reminder': '1',
-      ...byokHeaders,
-      ...(options.headers || {}),
-    },
+    headers: { ...headers, ...(options.headers || {}) },
   });
+}
+
+// Convenience wrapper for endpoints that may return 429 quota_exceeded.
+// Parses the JSON, checks for the quota_exceeded shape, throws QuotaExceededError
+// if found. Otherwise returns the parsed body.
+export async function apiFetchJson(path: string, options: RequestInit = {}): Promise<any> {
+  const res = await apiFetch(path, options);
+  if (res.status === 429) {
+    let detail: any = {};
+    try { detail = (await res.json()).detail || {}; } catch {}
+    if (detail?.error === 'quota_exceeded') throw new QuotaExceededError(detail);
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
+  }
+  return res.json();
 }
 
 export { API_URL };
