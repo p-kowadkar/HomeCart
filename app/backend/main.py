@@ -91,33 +91,116 @@ async def get_user_id(authorization: Optional[str] = Header(None)) -> Optional[s
 # and NEVER logged — only forwarded to the upstream provider for this single call.
 class BYOK(BaseModel):
     llm_key: Optional[str] = None
+    llm_vision_model: Optional[str] = None
+    llm_text_model: Optional[str] = None
     gcp_key: Optional[str] = None
     tavily_key: Optional[str] = None
     firecrawl_key: Optional[str] = None
+    user_id: Optional[str] = None  # Supabase user uuid; used for per-user rate limiting on non-BYOK calls.
 
 
 def get_byok(
     x_user_llm_key: Optional[str] = Header(None),
+    x_user_llm_vision_model: Optional[str] = Header(None),
+    x_user_llm_text_model: Optional[str] = Header(None),
     x_user_gcp_key: Optional[str] = Header(None),
     x_user_tavily_key: Optional[str] = Header(None),
     x_user_firecrawl_key: Optional[str] = Header(None),
+    x_user_id: Optional[str] = Header(None),
 ) -> BYOK:
     return BYOK(
         llm_key=x_user_llm_key,
+        llm_vision_model=x_user_llm_vision_model,
+        llm_text_model=x_user_llm_text_model,
         gcp_key=x_user_gcp_key,
         tavily_key=x_user_tavily_key,
         firecrawl_key=x_user_firecrawl_key,
+        user_id=x_user_id,
     )
 
 
-# Compatibility shims — older code in this module called these names. The actual routing
-# lives in providers.py (BYOK-aware). The shims accept an optional override_key for BYOK.
-async def call_llm_vision(image_base64: str, prompt: str, max_tokens: int = 1500, override_key: Optional[str] = None) -> str:
-    return await llm_vision(image_base64, prompt, max_tokens=max_tokens, override_key=override_key)
+async def call_llm_vision(
+    image_base64: str,
+    prompt: str,
+    max_tokens: int = 1500,
+    override_key: Optional[str] = None,
+    override_model: Optional[str] = None,
+) -> str:
+    return await llm_vision(image_base64, prompt, max_tokens=max_tokens,
+                            override_key=override_key, override_model=override_model)
 
 
-async def call_llm_text(prompt: str, max_tokens: int = 1500, override_key: Optional[str] = None) -> str:
-    return await llm_text(prompt, max_tokens=max_tokens, override_key=override_key)
+async def call_llm_text(
+    prompt: str,
+    max_tokens: int = 1500,
+    override_key: Optional[str] = None,
+    override_model: Optional[str] = None,
+) -> str:
+    return await llm_text(prompt, max_tokens=max_tokens,
+                          override_key=override_key, override_model=override_model)
+
+
+# ============================
+# RATE LIMITING (non-BYOK only)
+# ============================
+# Caps free-tier usage so a viral LinkedIn share can't drain the operator's
+# OpenRouter wallet. BYOK users (byok.llm_key set) bypass this entirely.
+SCAN_DAILY_LIMIT = int(os.environ.get("SCAN_DAILY_LIMIT", "10"))
+RECIPE_DAILY_LIMIT = int(os.environ.get("RECIPE_DAILY_LIMIT", "3"))
+
+
+def _enforce_daily_quota(user_id: Optional[str], kind: str) -> None:
+    """Raise 429 if user is over their daily quota for `kind` ∈ {"scan","recipe"}.
+
+    Read-then-write is racy, but acceptable for hackathon scale: worst case a
+    user burns 1-2 extra LLM calls by firing simultaneous requests. No
+    user_id (anonymous) is allowed through unmetered — the app gates auth
+    upstream so in practice every real request carries a user id.
+    """
+    if not user_id:
+        return
+    column = "scans_used" if kind == "scan" else "recipes_used"
+    limit = SCAN_DAILY_LIMIT if kind == "scan" else RECIPE_DAILY_LIMIT
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    row = (
+        supabase.table("daily_usage")
+        .select(column)
+        .eq("user_id", user_id)
+        .eq("usage_date", today)
+        .execute()
+    )
+    current = (row.data[0].get(column, 0) if row.data else 0) or 0
+
+    if current >= limit:
+        tomorrow_utc = (datetime.now(timezone.utc) + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "quota_exceeded",
+                "kind": kind,
+                "used": current,
+                "limit": limit,
+                "reset_at": tomorrow_utc.isoformat(),
+                "suggest_byok": True,
+                "message": (
+                    f"You've used your {limit} free {kind}s today. "
+                    "Add your own LLM key in Settings to keep going."
+                ),
+            },
+        )
+
+    supabase.table("daily_usage").upsert(
+        {
+            "user_id": user_id,
+            "usage_date": today,
+            column: current + 1,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        on_conflict="user_id,usage_date",
+    ).execute()
 
 
 def parse_json_from_response(text: str) -> dict:
@@ -217,7 +300,12 @@ If the image is unclear or not a food product, use match_score: 0 and explain in
 """
 
     try:
-        response_text = await call_llm_vision(req.image_base64, prompt, override_key=byok.llm_key)
+        if not byok.llm_key:
+            _enforce_daily_quota(byok.user_id, "scan")
+        response_text = await call_llm_vision(
+            req.image_base64, prompt,
+            override_key=byok.llm_key, override_model=byok.llm_vision_model,
+        )
         result = parse_json_from_response(response_text)
 
         # Persist scan if user authenticated
@@ -294,7 +382,12 @@ Output ONLY valid JSON (no preamble, no markdown):
 """
 
     try:
-        response_text = await call_llm_text(prompt, max_tokens=5000, override_key=byok.llm_key)
+        if not byok.llm_key:
+            _enforce_daily_quota(byok.user_id, "recipe")
+        response_text = await call_llm_text(
+            prompt, max_tokens=5000,
+            override_key=byok.llm_key, override_model=byok.llm_text_model,
+        )
         result = parse_json_from_response(response_text)
 
         # Persist if authenticated
