@@ -12,7 +12,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="Cartographer Backend")
+# Provider router for LLM calls (BYOK-aware). See app/backend/providers.py.
+from providers import llm_vision, llm_text
+
+app = FastAPI(title="HomeCart Backend")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,8 +27,23 @@ app.add_middleware(
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", os.environ.get("SUPABASE_KEY", ""))
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+
+# LLM gateway configuration. Default to OpenRouter (the OpenAI-compatible unified API)
+# because it lets us call Claude with our own credits today and trivially add OpenAI /
+# direct-Anthropic backends later for BYOK. Per-request user overrides (BYOK) can supply
+# their own key via the X-User-LLM-Key header; the request-level value takes precedence
+# over the env-level default.
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+LLM_API_KEY = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("LLM_API_KEY", "")
+LLM_VISION_MODEL = os.environ.get("LLM_VISION_MODEL", "anthropic/claude-sonnet-4.6")
+LLM_TEXT_MODEL = os.environ.get("LLM_TEXT_MODEL", "anthropic/claude-haiku-4.5")
+# OpenRouter likes (but does not require) these headers for analytics + leaderboard listing.
+LLM_APP_REFERRER = os.environ.get("LLM_APP_REFERRER", "https://homecart.app")
+LLM_APP_TITLE = os.environ.get("LLM_APP_TITLE", "HomeCart")
+
+# Legacy: keep ANTHROPIC_API_KEY around for fallback / future BYOK Anthropic provider path.
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -66,50 +84,40 @@ async def get_user_id(authorization: Optional[str] = Header(None)) -> Optional[s
 
 
 # ============================
-# CLAUDE API HELPERS
+# BYOK HEADER EXTRACTION
 # ============================
-async def call_claude_vision(image_base64: str, prompt: str, max_tokens: int = 800) -> str:
-    async with httpx.AsyncClient(timeout=45) as client:
-        r = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-sonnet-4-5",
-                "max_tokens": max_tokens,
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_base64}},
-                        {"type": "text", "text": prompt},
-                    ]
-                }]
-            }
-        )
-        r.raise_for_status()
-        return r.json()["content"][0]["text"]
+# Per-request user-supplied API keys. If a header is present, the user's key wins;
+# otherwise the env-configured default is used. Keys are NEVER persisted server-side
+# and NEVER logged — only forwarded to the upstream provider for this single call.
+class BYOK(BaseModel):
+    llm_key: Optional[str] = None
+    gcp_key: Optional[str] = None
+    tavily_key: Optional[str] = None
+    firecrawl_key: Optional[str] = None
 
 
-async def call_claude_text(prompt: str, max_tokens: int = 1500, model: str = "claude-haiku-4-5") -> str:
-    async with httpx.AsyncClient(timeout=45) as client:
-        r = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": model,
-                "max_tokens": max_tokens,
-                "messages": [{"role": "user", "content": prompt}]
-            }
-        )
-        r.raise_for_status()
-        return r.json()["content"][0]["text"]
+def get_byok(
+    x_user_llm_key: Optional[str] = Header(None),
+    x_user_gcp_key: Optional[str] = Header(None),
+    x_user_tavily_key: Optional[str] = Header(None),
+    x_user_firecrawl_key: Optional[str] = Header(None),
+) -> BYOK:
+    return BYOK(
+        llm_key=x_user_llm_key,
+        gcp_key=x_user_gcp_key,
+        tavily_key=x_user_tavily_key,
+        firecrawl_key=x_user_firecrawl_key,
+    )
+
+
+# Compatibility shims — older code in this module called these names. The actual routing
+# lives in providers.py (BYOK-aware). The shims accept an optional override_key for BYOK.
+async def call_llm_vision(image_base64: str, prompt: str, max_tokens: int = 1500, override_key: Optional[str] = None) -> str:
+    return await llm_vision(image_base64, prompt, max_tokens=max_tokens, override_key=override_key)
+
+
+async def call_llm_text(prompt: str, max_tokens: int = 1500, override_key: Optional[str] = None) -> str:
+    return await llm_text(prompt, max_tokens=max_tokens, override_key=override_key)
 
 
 def parse_json_from_response(text: str) -> dict:
@@ -146,7 +154,7 @@ def lookup_equivalence(detected_product: str, home_cuisines: list[str]) -> Optio
 # ============================
 @app.get("/")
 async def root():
-    return {"status": "Cartographer API running"}
+    return {"status": "HomeCart API running"}
 
 
 @app.get("/health")
@@ -154,12 +162,26 @@ async def health():
     return {"status": "healthy"}
 
 
+@app.get("/healthz")
+async def healthz():
+    """Lightweight liveness probe for UptimeRobot keep-alive pings.
+
+    Deliberately does no DB / LLM / Places work — just returns a 200 so that
+    Render's free tier never considers us idle. Safe to hit every 5 minutes.
+    """
+    return {"ok": True}
+
+
 @app.post("/scan")
-async def scan_product(req: ScanRequest, user_id: Optional[str] = Depends(get_user_id)):
+async def scan_product(
+    req: ScanRequest,
+    user_id: Optional[str] = Depends(get_user_id),
+    byok: BYOK = Depends(get_byok),
+):
     cuisines_str = ", ".join(req.user_profile.home_cuisines) if req.user_profile.home_cuisines else "Unknown"
     dietary_str = ", ".join(req.user_profile.dietary_preferences) if req.user_profile.dietary_preferences else "none"
 
-    prompt = f"""You are Cartographer, a culturally-aware grocery assistant for immigrants.
+    prompt = f"""You are HomeCart, a culturally-aware grocery assistant for immigrants.
 
 USER CONTEXT:
 - Home country: {req.user_profile.home_country or 'Unknown'}
@@ -183,17 +205,19 @@ Output ONLY valid JSON (no preamble, no markdown fences):
   "detected_category": "<rice|flour|cheese|spice|sauce|etc>",
   "cultural_equivalent": "<one sentence: what is this in their cuisine?>",
   "match_score": <0-100>,
-  "real_version_name": "<ideal product from specialty store, or null>",
+  "real_version_name": "<SHORT product name, MAX 6 words, e.g. 'Amul Fresh Cream' or 'San Marzano DOP Tomatoes' or 'Alphonso Mango' — never a sentence, never parenthetical store list. Or null.>",
   "ai_tip": "<one practical tip>",
   "can_make_at_home": <true/false>,
-  "home_recipe_summary": "<one sentence on how to make it, or null>"
+  "home_recipe_summary": "<one sentence on how to make it, or null>",
+  "availability_breadth": "<one of: 'mainstream' (common in any US supermarket, e.g. cauliflower, chicken, butter), 'specialty_only' (only in ethnic specialty stores, e.g. Alphonso mango, fresh paneer, banchan, curry leaves, masa harina), 'both' (mainstream carries a passable version but specialty has the real thing, e.g. basmati rice, soy sauce, olive oil)>",
+  "preferred_store_types": <array of store-type tokens that carry this product. Pick from: "supermarket", "warehouse_club", "indian_grocery", "south_asian_specialty", "chinese_grocery", "korean_grocery", "japanese_grocery", "vietnamese_grocery", "thai_grocery", "filipino_grocery", "mexican_grocery", "italian_specialty", "middle_eastern_grocery", "halal_grocery", "caribbean_grocery", "african_grocery", "european_grocery". Always include 1-4 tokens.>
 }}
 
 If the image is unclear or not a food product, use match_score: 0 and explain in cultural_equivalent.
 """
 
     try:
-        response_text = await call_claude_vision(req.image_base64, prompt)
+        response_text = await call_llm_vision(req.image_base64, prompt, override_key=byok.llm_key)
         result = parse_json_from_response(response_text)
 
         # Persist scan if user authenticated
@@ -210,6 +234,8 @@ If the image is unclear or not a food product, use match_score: 0 and explain in
                     "can_make_at_home": result.get("can_make_at_home", False),
                     "home_recipe_summary": result.get("home_recipe_summary"),
                     "real_version_name": result.get("real_version_name"),
+                    "availability_breadth": result.get("availability_breadth"),
+                    "preferred_store_types": result.get("preferred_store_types") or [],
                     "raw_vision_response": result,
                 }).execute()
             except Exception as e:
@@ -223,11 +249,15 @@ If the image is unclear or not a food product, use match_score: 0 and explain in
 
 
 @app.post("/recipe")
-async def import_recipe(req: RecipeImportRequest, user_id: Optional[str] = Depends(get_user_id)):
+async def import_recipe(
+    req: RecipeImportRequest,
+    user_id: Optional[str] = Depends(get_user_id),
+    byok: BYOK = Depends(get_byok),
+):
     cuisines_str = ", ".join(req.user_profile.home_cuisines) if req.user_profile.home_cuisines else "Unknown"
     dietary_str = ", ".join(req.user_profile.dietary_preferences) if req.user_profile.dietary_preferences else "none"
 
-    prompt = f"""You are Cartographer, helping an immigrant shop for their home cuisine in American grocery stores.
+    prompt = f"""You are HomeCart, helping an immigrant shop for their home cuisine in American grocery stores.
 
 USER:
 - Home cuisines: {cuisines_str}
@@ -255,14 +285,16 @@ Output ONLY valid JSON (no preamble, no markdown):
       "match_score": <0-100>,
       "aisle_location": "<aisle hint>",
       "ai_tip": "<one tip>",
-      "can_make_at_home": <true/false>
+      "can_make_at_home": <true/false>,
+      "availability_breadth": "<'mainstream' | 'specialty_only' | 'both'>",
+      "preferred_store_types": <1-4 tokens from: "supermarket", "warehouse_club", "indian_grocery", "south_asian_specialty", "chinese_grocery", "korean_grocery", "japanese_grocery", "vietnamese_grocery", "thai_grocery", "filipino_grocery", "mexican_grocery", "italian_specialty", "middle_eastern_grocery", "halal_grocery", "caribbean_grocery", "african_grocery", "european_grocery">
     }}
   ]
 }}
 """
 
     try:
-        response_text = await call_claude_text(prompt, max_tokens=2500)
+        response_text = await call_llm_text(prompt, max_tokens=5000, override_key=byok.llm_key)
         result = parse_json_from_response(response_text)
 
         # Persist if authenticated
@@ -287,6 +319,8 @@ Output ONLY valid JSON (no preamble, no markdown):
                         "aisle_location": ing.get("aisle_location"),
                         "ai_tip": ing.get("ai_tip"),
                         "can_make_at_home": ing.get("can_make_at_home", False),
+                        "availability_breadth": ing.get("availability_breadth"),
+                        "preferred_store_types": ing.get("preferred_store_types") or [],
                     }
                     for ing in result.get("ingredients", [])
                 ]
@@ -347,6 +381,120 @@ CUISINE_QUERIES: dict[str, list[str]] = {
 }
 DEFAULT_QUERIES = ["grocery store", "supermarket", "international market"]
 
+# Store-type -> Places text-search keywords. Used when the LLM has classified a product and
+# attached preferred_store_types; takes precedence over CUISINE_QUERIES.
+STORE_TYPE_QUERIES: dict[str, list[str]] = {
+    "supermarket": ["supermarket", "grocery store"],
+    "warehouse_club": ["costco", "bj's wholesale", "sam's club"],
+    "indian_grocery": ["indian grocery", "patel brothers", "apna bazaar"],
+    "south_asian_specialty": ["south asian grocery", "pakistani grocery", "bangladeshi grocery"],
+    "chinese_grocery": ["chinese grocery", "99 ranch", "asian supermarket"],
+    "korean_grocery": ["korean grocery", "h mart"],
+    "japanese_grocery": ["japanese grocery", "mitsuwa", "japanese market"],
+    "vietnamese_grocery": ["vietnamese grocery", "asian supermarket"],
+    "thai_grocery": ["thai grocery", "asian supermarket"],
+    "filipino_grocery": ["filipino grocery", "seafood city"],
+    "mexican_grocery": ["mexican grocery", "carniceria", "mexican market"],
+    "italian_specialty": ["italian deli", "eataly", "italian grocery"],
+    "middle_eastern_grocery": ["middle eastern grocery", "lebanese grocery"],
+    "halal_grocery": ["halal grocery", "halal market"],
+    "caribbean_grocery": ["caribbean grocery", "west indian grocery"],
+    "african_grocery": ["african grocery", "west african grocery"],
+    "european_grocery": ["european grocery", "polish grocery", "eastern european grocery"],
+}
+
+# Coarse mapping from a chain's metadata to the store-type tokens it represents.
+# Used to compute coverage (does this store carry items needing X store-type?) and to
+# decide whether a store qualifies as a "preferred" store for the active product context.
+def _store_types_for_chain(chain: Optional[dict]) -> list[str]:
+    if not chain:
+        return []
+    tokens: list[str] = []
+    tier = chain.get("authenticity_tier")
+    cuisines = chain.get("cuisines") or []
+    if tier in (3, 4) or "general" in cuisines:
+        tokens.append("supermarket")
+    if "costco" in chain["chain_name"].lower() or "bj" in chain["chain_name"].lower() or "sam's" in chain["chain_name"].lower():
+        tokens.append("warehouse_club")
+    cuisine_to_type = {
+        "indian": "indian_grocery",
+        "south_asian": "south_asian_specialty",
+        "pakistani": "south_asian_specialty",
+        "bangladeshi": "south_asian_specialty",
+        "chinese": "chinese_grocery",
+        "korean": "korean_grocery",
+        "japanese": "japanese_grocery",
+        "vietnamese": "vietnamese_grocery",
+        "thai": "thai_grocery",
+        "filipino": "filipino_grocery",
+        "mexican": "mexican_grocery",
+        "italian": "italian_specialty",
+        "middle_eastern": "middle_eastern_grocery",
+        "lebanese": "middle_eastern_grocery",
+        "syrian": "middle_eastern_grocery",
+        "caribbean": "caribbean_grocery",
+        "african": "african_grocery",
+        "nigerian": "african_grocery",
+    }
+    for c in cuisines:
+        t = cuisine_to_type.get(c)
+        if t and t not in tokens:
+            tokens.append(t)
+    return tokens
+
+
+# Heuristic fallback when Places returns an independent store (no chain match).
+# Only includes ETHNIC keywords (high precision: "indian", "halal", "h mart" really do
+# mean those things). The generic "supermarket" word and mainstream-chain names were
+# removed because:
+#   - All major US chains (Walmart, ShopRite, Wegmans, Whole Foods, Costco, BJ's, ...)
+#     are already in chain_personas, so the chain matcher catches them with confidence.
+#   - Random independent stores named "X Supermarket" or "Y Foods" were being
+#     mis-tagged as mainstream-supermarket store-type and ranked RECOMMENDED for
+#     mainstream-product searches (e.g. "Brothers Supermarket & Liquor" recommended
+#     for pork shoulder). Trusting only chain_personas + ethnic-keyword signals
+#     drops those false positives.
+def _store_types_from_name(display_name: str) -> list[str]:
+    name = display_name.lower()
+    tokens: list[str] = []
+    keyword_to_type = [
+        ("indian", "indian_grocery"),
+        ("patel", "indian_grocery"),
+        ("apna", "indian_grocery"),
+        ("subzi", "indian_grocery"),
+        ("desi", "south_asian_specialty"),
+        ("pakistani", "south_asian_specialty"),
+        ("bangladeshi", "south_asian_specialty"),
+        ("halal", "halal_grocery"),
+        ("h mart", "korean_grocery"),
+        ("hmart", "korean_grocery"),
+        ("h-mart", "korean_grocery"),
+        ("korean", "korean_grocery"),
+        ("japanese", "japanese_grocery"),
+        ("mitsuwa", "japanese_grocery"),
+        ("99 ranch", "chinese_grocery"),
+        ("chinese", "chinese_grocery"),
+        ("hong kong", "chinese_grocery"),
+        ("vietnamese", "vietnamese_grocery"),
+        ("thai", "thai_grocery"),
+        ("filipino", "filipino_grocery"),
+        ("mexican", "mexican_grocery"),
+        ("carniceria", "mexican_grocery"),
+        ("italian", "italian_specialty"),
+        ("eataly", "italian_specialty"),
+        ("middle eastern", "middle_eastern_grocery"),
+        ("lebanese", "middle_eastern_grocery"),
+        ("turkish", "middle_eastern_grocery"),
+        ("caribbean", "caribbean_grocery"),
+        ("west indian", "caribbean_grocery"),
+        ("african", "african_grocery"),
+        ("polish", "european_grocery"),
+    ]
+    for kw, tok in keyword_to_type:
+        if kw in name and tok not in tokens:
+            tokens.append(tok)
+    return tokens
+
 
 def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Distance in km between two coordinates."""
@@ -357,15 +505,21 @@ def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * 2 * atan2(sqrt(a), sqrt(1 - a))
 
 
-def _cache_key(lat: float, lon: float, cuisine: Optional[str]) -> str:
-    # Round to 2 decimal places (~1.1 km grid) so nearby users share cache hits
-    return f"lat:{round(lat, 2)},lon:{round(lon, 2)},cuisine:{cuisine or 'general'}"
+def _cache_key(lat: float, lon: float, cuisine: Optional[str], product_context: Optional[dict] = None) -> str:
+    # Round to 2 decimal places (~1.1 km grid) so nearby users share cache hits.
+    # Product-aware searches get their own cache namespace keyed by preferred_store_types.
+    base = f"lat:{round(lat, 2)},lon:{round(lon, 2)}"
+    if product_context and product_context.get("preferred_store_types"):
+        types_key = ",".join(sorted(product_context["preferred_store_types"]))
+        breadth = product_context.get("availability_breadth") or "both"
+        return f"{base},product:{breadth}:{types_key}"
+    return f"{base},cuisine:{cuisine or 'general'}"
 
 
-async def _search_places(query: str, lat: float, lon: float, radius_m: int = 10000) -> list:
+async def _search_places(query: str, lat: float, lon: float, radius_m: int = 10000, override_key: Optional[str] = None) -> list:
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+        "X-Goog-Api-Key": (override_key or GOOGLE_MAPS_API_KEY),
         # Only request fields we use — keeps us in the cheaper tier
         "X-Goog-FieldMask": (
             "places.id,places.displayName,places.formattedAddress,"
@@ -401,19 +555,37 @@ def _classify_chain(display_name: str, chains: list) -> Optional[dict]:
     return None
 
 
+class IngredientCoverage(BaseModel):
+    name: str
+    preferred_store_types: List[str] = []
+
+
+class ProductContext(BaseModel):
+    availability_breadth: Optional[str] = None  # 'mainstream' | 'specialty_only' | 'both'
+    preferred_store_types: List[str] = []
+    needed_items: Optional[List[IngredientCoverage]] = None  # for recipe coverage ranking
+
+
 class NearbyStoresRequest(BaseModel):
     lat: float
     lon: float
     cuisine: Optional[str] = None
-    needed_items: Optional[List[str]] = None
+    product_context: Optional[ProductContext] = None
 
 
 @app.post("/stores/nearby")
-async def stores_nearby(req: NearbyStoresRequest, user_id: Optional[str] = Depends(get_user_id)):
-    if not GOOGLE_MAPS_API_KEY:
+async def stores_nearby(
+    req: NearbyStoresRequest,
+    user_id: Optional[str] = Depends(get_user_id),
+    byok: BYOK = Depends(get_byok),
+):
+    effective_gcp_key = byok.gcp_key or GOOGLE_MAPS_API_KEY
+    if not effective_gcp_key:
         raise HTTPException(503, "Google Maps API key not configured")
 
-    cache_key = _cache_key(req.lat, req.lon, req.cuisine)
+    pc = req.product_context
+    pc_dict = pc.model_dump() if pc else None
+    cache_key = _cache_key(req.lat, req.lon, req.cuisine, pc_dict)
 
     # Check 24-hour cache
     try:
@@ -425,15 +597,25 @@ async def stores_nearby(req: NearbyStoresRequest, user_id: Optional[str] = Depen
     except Exception as e:
         print(f"[stores] Cache read failed: {e}")
 
-    # Determine search queries from cuisine
-    queries = CUISINE_QUERIES.get(req.cuisine or "", DEFAULT_QUERIES)[:3]
+    # Build query list: product_context takes precedence over cuisine.
+    queries: list[str] = []
+    if pc and pc.preferred_store_types:
+        seen_q: set = set()
+        for token in pc.preferred_store_types:
+            for q in STORE_TYPE_QUERIES.get(token, []):
+                if q not in seen_q:
+                    seen_q.add(q)
+                    queries.append(q)
+        queries = queries[:4]
+    if not queries:
+        queries = CUISINE_QUERIES.get(req.cuisine or "", DEFAULT_QUERIES)[:3]
 
-    # Fetch from Google Places (cap at 3 queries to stay efficient)
+    # Fetch from Google Places
     all_places: list = []
     seen_ids: set = set()
     for q in queries:
         try:
-            places = await _search_places(q, req.lat, req.lon)
+            places = await _search_places(q, req.lat, req.lon, override_key=byok.gcp_key)
             for p in places:
                 pid = p.get("id", "")
                 if pid and pid not in seen_ids:
@@ -448,6 +630,9 @@ async def stores_nearby(req: NearbyStoresRequest, user_id: Optional[str] = Depen
     except Exception:
         chains = []
 
+    breadth = pc.availability_breadth if pc else None
+    preferred_set = set(pc.preferred_store_types) if pc else set()
+
     # Rank and enrich results
     results = []
     for p in all_places:
@@ -458,10 +643,24 @@ async def stores_nearby(req: NearbyStoresRequest, user_id: Optional[str] = Depen
         dist_km = _haversine(req.lat, req.lon, plat, plon)
 
         chain = _classify_chain(display_name, chains)
+        store_types = _store_types_for_chain(chain) if chain else _store_types_from_name(display_name)
+        store_types_set = set(store_types)
+        is_preferred = bool(preferred_set & store_types_set) if preferred_set else False
 
-        # Cultural relevance score (0-100)
-        cultural_score = 40  # default: unknown store
-        if chain:
+        # Scoring path. Three regimes:
+        # 1) product_context with breadth = specialty_only: heavily penalize non-preferred stores.
+        # 2) product_context with breadth = mainstream OR both: pure distance-first, authenticity is tiebreaker.
+        # 3) No product_context (cuisine-only legacy path): existing cultural-tier ranking.
+        if pc and preferred_set:
+            base = 70 if is_preferred else 35
+            if breadth == "specialty_only":
+                if not is_preferred:
+                    base -= 60  # near-exclude mainstream when the product is specialty-only
+            elif breadth in ("mainstream", "both"):
+                # Distance-first: clamp the cultural bonus so distance dominates.
+                base = min(base, 60)
+            cultural_score = base
+        elif chain:
             tier = chain["authenticity_tier"]
             cuisine_match = req.cuisine and req.cuisine in chain["cuisines"]
             if cuisine_match and tier == 1:
@@ -469,7 +668,7 @@ async def stores_nearby(req: NearbyStoresRequest, user_id: Optional[str] = Depen
             elif cuisine_match and tier == 2:
                 cultural_score = 70
             elif tier == 1:
-                cultural_score = 60  # specialty ethnic but different cuisine — still knowledgeable
+                cultural_score = 60
             elif tier == 2:
                 cultural_score = 50
             elif tier == 3:
@@ -477,13 +676,24 @@ async def stores_nearby(req: NearbyStoresRequest, user_id: Optional[str] = Depen
             else:
                 cultural_score = 20
         else:
-            # Unknown store — if it came up in a cuisine-specific query, likely a match
             if req.cuisine and queries != DEFAULT_QUERIES:
-                cultural_score = 80  # independent specialty store
+                cultural_score = 80
+            else:
+                cultural_score = 40
 
         # Distance penalty: -3.3 points per km, capped at -50
         dist_penalty = min(50.0, dist_km * 3.3)
         final_score = max(0.0, cultural_score - dist_penalty)
+
+        # Per-ingredient coverage when the recipe flow asks for it.
+        coverage_matched = 0
+        coverage_items: list[str] = []
+        if pc and pc.needed_items:
+            for ing in pc.needed_items:
+                ing_types = set(ing.preferred_store_types or [])
+                if not ing_types or (ing_types & store_types_set):
+                    coverage_matched += 1
+                    coverage_items.append(ing.name)
 
         results.append({
             "place_id": p.get("id", ""),
@@ -500,16 +710,35 @@ async def stores_nearby(req: NearbyStoresRequest, user_id: Optional[str] = Depen
             "authenticity_tier": chain["authenticity_tier"] if chain else None,
             "price_tier": chain["price_tier"] if chain else None,
             "notes": chain["notes"] if chain else None,
-            "is_specialty": cultural_score >= 80,
+            "store_types": store_types,
+            "is_preferred": is_preferred,
+            "is_specialty": cultural_score >= 80 or (chain and chain.get("authenticity_tier") == 1),
             "cultural_score": round(cultural_score),
             "final_score": round(final_score, 1),
+            "coverage_matched": coverage_matched,
+            "coverage_total": len(pc.needed_items) if (pc and pc.needed_items) else 0,
+            "coverage_items": coverage_items,
         })
 
-    # Sort: best score first, tie-break by distance
-    results.sort(key=lambda r: (-r["final_score"], r["distance_km"]))
+    # Sort + filter. Recipe flow with needed_items: drop stores that cover ZERO ingredients
+    # (no point showing them on a recipe map), then sort by distance ASC, coverage DESC as
+    # tiebreaker. Earlier behaviour (coverage-first sort) over-promoted distant general stores;
+    # this ranks proximity first, which is what users actually optimize for when shopping.
+    if pc and pc.needed_items:
+        results = [r for r in results if r["coverage_matched"] > 0]
+        results.sort(key=lambda r: (r["distance_km"], -r["coverage_matched"]))
+    elif pc and breadth == "specialty_only":
+        results.sort(key=lambda r: (0 if r["is_preferred"] else 1, -r["final_score"], r["distance_km"]))
+    elif pc and breadth in ("mainstream", "both"):
+        # Preferred (chain-classified) stores first, then distance. This keeps
+        # real ShopRite / Walmart / Costco above random "X Supermarket" corner stores
+        # even when the corner store is a hair closer.
+        results.sort(key=lambda r: (0 if r["is_preferred"] else 1, r["distance_km"]))
+    else:
+        results.sort(key=lambda r: (-r["final_score"], r["distance_km"]))
     results = results[:15]
 
-    # Write to cache (fire-and-forget — don't fail the request on cache write error)
+    # Cache write — fire and forget
     try:
         supabase.table("store_cache").upsert({"cache_key": cache_key, "results": results}).execute()
     except Exception as e:

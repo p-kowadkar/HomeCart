@@ -30,8 +30,16 @@ CHAINS = [
      "notes": "Latin/Caribbean. Plantains, yuca, sofrito, queso fresco."},
     {"chain_name": "Sahadi's", "chain_aliases": [], "cuisines": ["lebanese", "syrian", "palestinian", "middle_eastern"], "authenticity_tier": 1, "price_tier": 2,
      "notes": "Middle Eastern specialty. Bulk spices, olive oils, halva, za'atar."},
+    {"chain_name": "Apna Bazaar", "chain_aliases": ["apna bazar", "apnabazar"], "cuisines": ["indian", "south_asian", "pakistani", "bangladeshi"], "authenticity_tier": 1, "price_tier": 2,
+     "notes": "South Asian specialty. Fresh paneer, regional spice mixes, frozen rotis, halal meat."},
+    {"chain_name": "India Bazaar", "chain_aliases": ["india bazar"], "cuisines": ["indian", "south_asian"], "authenticity_tier": 1, "price_tier": 2,
+     "notes": "Indian specialty. Strong on lentils, atta flours, ghee, regional pickles."},
+    {"chain_name": "Subzi Mandi", "chain_aliases": ["subzimandi"], "cuisines": ["indian", "south_asian"], "authenticity_tier": 1, "price_tier": 1,
+     "notes": "Budget Indian specialty. Bulk fresh produce, value spice packs."},
 
-    # Premium general (tier 2)
+    # Warehouse clubs (tier 2 — premium-warehouse) and premium general
+    {"chain_name": "Costco", "chain_aliases": ["costco wholesale"], "cuisines": ["general", "italian", "mediterranean", "korean"], "authenticity_tier": 2, "price_tier": 2,
+     "notes": "Warehouse club. Surprisingly strong Korean/Asian section in demographic stores. Bulk olive oil, parmigiano, basmati."},
     {"chain_name": "Whole Foods Market", "chain_aliases": ["whole foods", "wfm"], "cuisines": ["general", "italian", "mediterranean", "japanese"], "authenticity_tier": 2, "price_tier": 3,
      "notes": "Premium mainstream. Decent international section. Strong on Italian, Mediterranean, organic basics."},
     {"chain_name": "Wegmans", "chain_aliases": [], "cuisines": ["general", "italian", "mediterranean"], "authenticity_tier": 2, "price_tier": 2,
@@ -54,12 +62,20 @@ CHAINS = [
      "notes": "Mainstream West Coast. Limited international."},
     {"chain_name": "Publix", "chain_aliases": [], "cuisines": ["general"], "authenticity_tier": 3, "price_tier": 2,
      "notes": "Mainstream Southeast. Decent Latin section."},
+    {"chain_name": "Hannaford", "chain_aliases": ["hannaford supermarkets"], "cuisines": ["general"], "authenticity_tier": 3, "price_tier": 2,
+     "notes": "Northeast mainstream. Solid produce, basic international aisle."},
+    {"chain_name": "BJ's Wholesale Club", "chain_aliases": ["bj's", "bjs", "bj's wholesale"], "cuisines": ["general"], "authenticity_tier": 3, "price_tier": 1,
+     "notes": "Warehouse club. Bulk basics. Limited international depth but huge quantities."},
+    {"chain_name": "Sam's Club", "chain_aliases": ["sams club"], "cuisines": ["general", "mexican"], "authenticity_tier": 3, "price_tier": 1,
+     "notes": "Warehouse club. Decent Latin/Mexican section in border states. Bulk staples."},
 
     # Budget (tier 4)
     {"chain_name": "Walmart", "chain_aliases": ["walmart supercenter", "walmart neighborhood market"], "cuisines": ["general"], "authenticity_tier": 4, "price_tier": 1,
      "notes": "Budget mainstream. Limited international beyond Latin basics."},
     {"chain_name": "Aldi", "chain_aliases": [], "cuisines": ["general"], "authenticity_tier": 4, "price_tier": 1,
      "notes": "Budget mainstream. Mostly private label, limited international."},
+    {"chain_name": "Lidl", "chain_aliases": [], "cuisines": ["general"], "authenticity_tier": 4, "price_tier": 1,
+     "notes": "Budget mainstream. Private label heavy, growing US presence."},
 ]
 
 

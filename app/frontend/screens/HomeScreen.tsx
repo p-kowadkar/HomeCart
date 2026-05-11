@@ -1,267 +1,292 @@
-import React from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, SafeAreaView, Dimensions } from 'react-native';
-import { useAuth } from '../context/AuthContext';
+import React, { useEffect, useState } from 'react';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Dimensions, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../theme/ThemeContext';
+import { supabase } from '../lib/supabase';
 
 const { width } = Dimensions.get('window');
 
-export default function HomeScreen() {
+const COUNTRY_FLAG: Record<string, string> = {
+  india: '🇮🇳', pakistan: '🇵🇰', bangladesh: '🇧🇩', srilanka: '🇱🇰', nepal: '🇳🇵',
+  china: '🇨🇳', japan: '🇯🇵', korea: '🇰🇷', taiwan: '🇹🇼',
+  vietnam: '🇻🇳', thailand: '🇹🇭', philippines: '🇵🇭', indonesia: '🇮🇩', malaysia: '🇲🇾', singapore: '🇸🇬',
+  italy: '🇮🇹', france: '🇫🇷', spain: '🇪🇸', portugal: '🇵🇹', greece: '🇬🇷', germany: '🇩🇪', poland: '🇵🇱',
+  turkey: '🇹🇷', russia: '🇷🇺', ukraine: '🇺🇦',
+  iran: '🇮🇷', lebanon: '🇱🇧', israel: '🇮🇱', egypt: '🇪🇬',
+  nigeria: '🇳🇬', ghana: '🇬🇭', ethiopia: '🇪🇹', morocco: '🇲🇦', southafrica: '🇿🇦', kenya: '🇰🇪',
+  mexico: '🇲🇽', brazil: '🇧🇷', argentina: '🇦🇷', peru: '🇵🇪', colombia: '🇨🇴', venezuela: '🇻🇪',
+  cuba: '🇨🇺', jamaica: '🇯🇲', usa: '🇺🇸',
+};
+
+interface RecentScan {
+  id: string;
+  detected_product: string;
+  cultural_equivalent: string;
+  match_score: number;
+  created_at: string;
+}
+
+interface RecentList {
+  id: string;
+  title: string;
+  source_dish: string;
+  created_at: string;
+}
+
+export default function HomeScreen({ navigation }: any) {
   const { user, profile, signOut } = useAuth();
+  const { colors } = useTheme();
+  const [recentScans, setRecentScans] = useState<RecentScan[]>([]);
+  const [recentLists, setRecentLists] = useState<RecentList[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const [scansRes, listsRes] = await Promise.all([
+          supabase.from('scans').select('id, detected_product, cultural_equivalent, match_score, created_at')
+            .eq('user_id', user.id).order('created_at', { ascending: false }).limit(3),
+          supabase.from('shopping_lists').select('id, title, source_dish, created_at')
+            .eq('user_id', user.id).order('created_at', { ascending: false }).limit(3),
+        ]);
+        if (scansRes.data) setRecentScans(scansRes.data);
+        if (listsRes.data) setRecentLists(listsRes.data);
+      } catch (e) {
+        console.error('Home data fetch failed:', e);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [user]);
+
+  const firstName = (user?.user_metadata?.full_name || profile?.full_name || 'there').split(' ')[0];
+  const flag = COUNTRY_FLAG[profile?.home_country || ''] || '🌍';
+  const cuisineLabel = profile?.home_region
+    ? `${profile.home_region} cuisine`
+    : profile?.home_country
+    ? `${profile.home_country.charAt(0).toUpperCase() + profile.home_country.slice(1)} cuisine`
+    : 'your cuisine';
 
   const QUICK_ACTIONS = [
-    { id: 'scan', name: 'Scan Label', icon: 'camera-scan', color: '#3B82F6' },
-    { id: 'list', name: 'New List', icon: 'playlist-plus', color: '#10B981' },
-    { id: 'diet', name: 'Dietary Check', icon: 'leaf', color: '#F59E0B' },
-    { id: 'history', name: 'History', icon: 'history', color: '#8B5CF6' },
+    { id: 'scan', label: 'Scan Label', icon: 'camera-iris' as const, color: '#3B82F6', onPress: () => navigation?.navigate('MagicLens') },
+    { id: 'recipe', label: 'New Recipe', icon: 'silverware-fork-knife' as const, color: '#10B981', onPress: () => navigation?.navigate('List') },
+    { id: 'stores', label: 'Find Stores', icon: 'store-marker' as const, color: '#F472B6', onPress: () => navigation?.navigate('Map') },
+    { id: 'profile', label: 'Profile', icon: 'account-circle' as const, color: '#A855F7', onPress: () => navigation?.navigate('Profile') },
   ];
 
+  const scoreColor = (s: number) => s >= 80 ? colors.scoreHigh : s >= 50 ? colors.scoreMid : colors.scoreLow;
+
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar style="dark" />
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Header */}
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.bg }]} edges={['top']}>
+      <StatusBar style="light" />
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* Greeting */}
         <View style={styles.header}>
-          <View>
-            <Text style={styles.greeting}>Hi, {user?.user_metadata?.full_name || 'Traveler'}! 👋</Text>
-            <Text style={styles.location}>Explore groceries in {profile?.home_country || 'your region'}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.greeting, { color: colors.textPrimary }]}>Hi, {firstName} <Text style={{ fontSize: 22 }}>{flag}</Text></Text>
+            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Mapping {cuisineLabel} to your local stores</Text>
           </View>
-          <TouchableOpacity style={styles.profileButton}>
-            <View style={styles.profileImagePlaceholder}>
-              <Text style={styles.profileInitial}>
-                {(user?.user_metadata?.full_name || 'T')[0]}
-              </Text>
-            </View>
+          <TouchableOpacity onPress={() => navigation?.navigate('Profile')} style={[styles.avatar, { backgroundColor: colors.primary }]}>
+            <Text style={styles.avatarText}>{firstName.charAt(0).toUpperCase()}</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Search Bar Placeholder */}
-        <TouchableOpacity style={styles.searchBar}>
-          <MaterialCommunityIcons name="magnify" size={24} color="#94A3B8" />
-          <Text style={styles.searchText}>Search for products or brands...</Text>
+        {/* Magic Lens hero CTA */}
+        <TouchableOpacity
+          onPress={() => navigation?.navigate('MagicLens')}
+          style={[styles.heroCard, { backgroundColor: colors.primary }]}
+          activeOpacity={0.85}
+        >
+          <View style={styles.heroLeft}>
+            <Text style={styles.heroEyebrow}>MAGIC LENS</Text>
+            <Text style={styles.heroTitle}>Scan any product</Text>
+            <Text style={styles.heroSub}>Translate it to {cuisineLabel.toLowerCase()} in seconds</Text>
+          </View>
+          <View style={styles.heroIcon}>
+            <MaterialCommunityIcons name="scan-helper" size={56} color="#fff" />
+          </View>
         </TouchableOpacity>
 
-        {/* Quick Actions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <View style={styles.actionGrid}>
-            {QUICK_ACTIONS.map(action => (
-              <TouchableOpacity key={action.id} style={styles.actionCard}>
-                <View style={[styles.iconContainer, { backgroundColor: action.color + '15' }]}>
-                  <MaterialCommunityIcons name={action.icon as any} size={28} color={action.color} />
-                </View>
-                <Text style={styles.actionName}>{action.name}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+        {/* Quick Actions Grid */}
+        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Quick Actions</Text>
+        <View style={styles.actionGrid}>
+          {QUICK_ACTIONS.map(action => (
+            <TouchableOpacity
+              key={action.id}
+              onPress={action.onPress}
+              style={[styles.actionCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.iconWrap, { backgroundColor: action.color + '22' }]}>
+                <MaterialCommunityIcons name={action.icon} size={26} color={action.color} />
+              </View>
+              <Text style={[styles.actionLabel, { color: colors.textPrimary }]}>{action.label}</Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
-        {/* Local Favorites / Categories */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Local Essentials</Text>
-            <TouchableOpacity>
-              <Text style={styles.seeAll}>See All</Text>
+        {/* Recent scans */}
+        {loading ? (
+          <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+            <ActivityIndicator color={colors.primary} />
+          </View>
+        ) : recentScans.length > 0 ? (
+          <>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Recent Scans</Text>
+              <TouchableOpacity onPress={() => navigation?.navigate('MagicLens')}>
+                <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '600' }}>+ New</Text>
+              </TouchableOpacity>
+            </View>
+            {recentScans.map(scan => (
+              <View key={scan.id} style={[styles.scanCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={{ flex: 1, paddingRight: 12 }}>
+                  <Text style={[styles.scanProduct, { color: colors.textPrimary }]} numberOfLines={1}>{scan.detected_product}</Text>
+                  <Text style={[styles.scanCultural, { color: colors.textSecondary }]} numberOfLines={2}>{scan.cultural_equivalent}</Text>
+                </View>
+                <View style={[styles.scoreBadge, { backgroundColor: scoreColor(scan.match_score) + '22' }]}>
+                  <Text style={[styles.scoreText, { color: scoreColor(scan.match_score) }]}>{scan.match_score}</Text>
+                </View>
+              </View>
+            ))}
+          </>
+        ) : (
+          <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <MaterialCommunityIcons name="camera-iris" size={32} color={colors.textTertiary} />
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No scans yet</Text>
+            <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>Tap Magic Lens to scan your first product</Text>
+          </View>
+        )}
+
+        {/* Recent recipe lists */}
+        {recentLists.length > 0 && (
+          <>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Recipe Lists</Text>
+              <TouchableOpacity onPress={() => navigation?.navigate('List')}>
+                <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '600' }}>+ New</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -20 }} contentContainerStyle={{ paddingHorizontal: 20, gap: 12 }}>
+              {recentLists.map(list => (
+                <TouchableOpacity
+                  key={list.id}
+                  onPress={() => navigation?.navigate('List', { autoImportDish: list.source_dish || list.title })}
+                  style={[styles.listCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                >
+                  <MaterialCommunityIcons name="clipboard-list" size={24} color={colors.primary} />
+                  <Text style={[styles.listTitle, { color: colors.textPrimary }]} numberOfLines={2}>{list.source_dish || list.title}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </>
+        )}
+
+        {/* Cultural identity card */}
+        {profile?.home_country && (
+          <View style={[styles.identityCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.identityFlag]}>{flag}</Text>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={[styles.identityLabel, { color: colors.textTertiary }]}>YOUR CUISINE PROFILE</Text>
+              <Text style={[styles.identityValue, { color: colors.textPrimary }]} numberOfLines={1}>
+                {profile.home_country.charAt(0).toUpperCase() + profile.home_country.slice(1)}
+                {profile.home_region ? ` · ${profile.home_region}` : ''}
+              </Text>
+              {profile.dietary_preferences?.length > 0 && (
+                <Text style={[styles.identityDiet, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {profile.dietary_preferences.join(' · ')}
+                </Text>
+              )}
+            </View>
+            <TouchableOpacity onPress={() => navigation?.navigate('Profile')}>
+              <MaterialCommunityIcons name="cog-outline" size={20} color={colors.textTertiary} />
             </TouchableOpacity>
           </View>
-          
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.horizontalScroll}>
-            {[1, 2, 3].map(i => (
-              <TouchableOpacity key={i} style={styles.featuredCard}>
-                <View style={styles.cardImagePlaceholder}>
-                   <MaterialCommunityIcons name="food-apple" size={40} color="#CBD5E1" />
-                </View>
-                <View style={styles.cardContent}>
-                  <Text style={styles.cardTitle}>Local Brand {i}</Text>
-                  <Text style={styles.cardSubtitle}>Fresh & Local</Text>
-                  <View style={styles.tagContainer}>
-                    <Text style={styles.tag}>Localized</Text>
-                  </View>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
+        )}
 
-        {/* Sign Out for now */}
-        <TouchableOpacity style={styles.signOutButton} onPress={signOut}>
-          <Text style={styles.signOutText}>Sign Out</Text>
-        </TouchableOpacity>
+        <View style={{ height: 24 }} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  scrollContent: {
+  container: { flex: 1 },
+  scrollContent: { padding: 20, paddingBottom: 40 },
+  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 24 },
+  greeting: { fontSize: 26, fontWeight: '700' },
+  subtitle: { fontSize: 14, marginTop: 4 },
+  avatar: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
+  avatarText: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  heroCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
     padding: 20,
+    borderRadius: 20,
+    marginBottom: 28,
+    minHeight: 130,
+    overflow: 'hidden',
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 24,
-    marginTop: 12,
-  },
-  greeting: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#0F172A',
-  },
-  location: {
-    fontSize: 14,
-    color: '#64748B',
-    marginTop: 4,
-  },
-  profileButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#fff',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  profileImagePlaceholder: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 24,
-    backgroundColor: '#3B82F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  profileInitial: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    padding: 14,
+  heroLeft: { flex: 1 },
+  heroEyebrow: { color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '700', letterSpacing: 1.2, marginBottom: 4 },
+  heroTitle: { color: '#fff', fontSize: 22, fontWeight: '800' },
+  heroSub: { color: 'rgba(255,255,255,0.92)', fontSize: 13, marginTop: 6, lineHeight: 18 },
+  heroIcon: { opacity: 0.95 },
+  sectionTitle: { fontSize: 17, fontWeight: '700', marginBottom: 14, marginTop: 6 },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, marginBottom: 10 },
+  actionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 },
+  actionCard: {
+    width: (width - 52) / 2,
+    padding: 18,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: 32,
+    alignItems: 'flex-start',
   },
-  searchText: {
-    marginLeft: 12,
-    color: '#94A3B8',
-    fontSize: 16,
-  },
-  section: {
-    marginBottom: 32,
-  },
-  sectionHeader: {
+  iconWrap: { width: 44, height: 44, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
+  actionLabel: { fontSize: 14, fontWeight: '600' },
+  scanCard: {
     flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 10,
+  },
+  scanProduct: { fontSize: 15, fontWeight: '700' },
+  scanCultural: { fontSize: 12, marginTop: 4, lineHeight: 16 },
+  scoreBadge: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
+  scoreText: { fontSize: 14, fontWeight: '800' },
+  emptyCard: {
+    padding: 24,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  emptyText: { fontSize: 14, fontWeight: '600', marginTop: 10 },
+  emptyHint: { fontSize: 12, marginTop: 4, textAlign: 'center' },
+  listCard: {
+    width: 160,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    minHeight: 100,
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1E293B',
-    marginBottom: 16,
-  },
-  actionGrid: {
+  listTitle: { fontSize: 14, fontWeight: '600', marginTop: 10 },
+  identityCard: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 16,
-  },
-  actionCard: {
-    width: (width - 56) / 2,
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 20,
     alignItems: 'center',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-  },
-  iconContainer: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  actionName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#334155',
-  },
-  horizontalScroll: {
-    marginHorizontal: -20,
-    paddingHorizontal: 20,
-  },
-  featuredCard: {
-    width: 240,
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    marginRight: 16,
-    overflow: 'hidden',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-  },
-  cardImagePlaceholder: {
-    height: 120,
-    backgroundColor: '#F1F5F9',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cardContent: {
     padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 16,
   },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  cardSubtitle: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 4,
-  },
-  tagContainer: {
-    marginTop: 12,
-    flexDirection: 'row',
-  },
-  tag: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#3B82F6',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  seeAll: {
-    fontSize: 14,
-    color: '#3B82F6',
-    fontWeight: '600',
-  },
-  signOutButton: {
-    marginTop: 20,
-    padding: 16,
-    alignItems: 'center',
-  },
-  signOutText: {
-    color: '#EF4444',
-    fontWeight: '600',
-  }
+  identityFlag: { fontSize: 32 },
+  identityLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1 },
+  identityValue: { fontSize: 15, fontWeight: '700', marginTop: 4 },
+  identityDiet: { fontSize: 12, marginTop: 2 },
 });

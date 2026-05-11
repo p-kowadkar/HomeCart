@@ -40,3 +40,7 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# EAS local credentials — keystore + password file must never be committed
+credentials/
+credentials.json

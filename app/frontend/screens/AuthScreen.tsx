@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, Platform, Alert, ActivityIndicator, TextInput, ScrollView, KeyboardAvoidingView } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Platform, Alert, ActivityIndicator, TextInput, ScrollView, KeyboardAvoidingView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
+import { useTheme } from '../theme/ThemeContext';
 
 export default function AuthScreen() {
+  const { colors } = useTheme();
   const [loading, setLoading] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
@@ -14,30 +18,20 @@ export default function AuthScreen() {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
-
     setLoading(true);
     try {
       if (isSignUp) {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: {
-            data: {
-              full_name: name,
-            },
-          },
+          options: { data: { full_name: name } },
         });
         if (error) throw error;
-        if (data.session) {
-          Alert.alert('Success', 'Account created and logged in!');
-        } else {
+        if (!data.session) {
           Alert.alert('Success', 'Please check your email for the confirmation link.');
         }
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       }
     } catch (err: any) {
@@ -48,87 +42,83 @@ export default function AuthScreen() {
     }
   };
 
-
-
   return (
-    <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{ flex: 1 }}
-      >
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <View style={styles.content}>
-            <Text style={styles.title}>Cartographer</Text>
-            <Text style={styles.subtitle}>Your AI Grocery Companion</Text>
-            
-            <View style={styles.form}>
-              {isSignUp && (
-                <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Full Name</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="John Doe"
-                    value={name}
-                    onChangeText={setName}
-                    autoCapitalize="words"
-                  />
-                </View>
-              )}
-
-              <View style={styles.inputContainer}>
-                <Text style={styles.label}>Email Address</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="name@example.com"
-                  value={email}
-                  onChangeText={setEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                />
-              </View>
-
-              <View style={styles.inputContainer}>
-                <Text style={styles.label}>Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="••••••••"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                />
-              </View>
-
-              <TouchableOpacity 
-                style={[styles.button, styles.primaryButton]} 
-                onPress={handleEmailAuth}
-                disabled={loading}
-              >
-                {loading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.primaryButtonText}>
-                    {isSignUp ? 'Create Account' : 'Sign In'}
-                  </Text>
-                )}
-              </TouchableOpacity>
-
-
-
-              <TouchableOpacity 
-                style={styles.toggleButton}
-                onPress={() => setIsSignUp(!isSignUp)}
-              >
-                <Text style={styles.toggleText}>
-                  {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
-                </Text>
-              </TouchableOpacity>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.bg }]}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          <View style={styles.brandWrap}>
+            <View style={[styles.logoCircle, { backgroundColor: colors.primary }]}>
+              <MaterialCommunityIcons name="map-marker-radius" size={36} color="#fff" />
             </View>
-
-            <Text style={styles.footerText}>
-              By continuing, you agree to the{'\n'}
-              <Text style={styles.link}>Terms of Service</Text> and <Text style={styles.link}>Privacy Policy</Text>.
+            <Text style={[styles.title, { color: colors.textPrimary }]}>HomeCart</Text>
+            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+              Your AI grocery companion for navigating American shelves with home in mind.
             </Text>
           </View>
+
+          <View style={styles.form}>
+            {isSignUp && (
+              <View style={styles.inputContainer}>
+                <Text style={[styles.label, { color: colors.textSecondary }]}>Full Name</Text>
+                <TextInput
+                  style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+                  placeholder="Jane Doe"
+                  placeholderTextColor={colors.textTertiary}
+                  value={name}
+                  onChangeText={setName}
+                  autoCapitalize="words"
+                />
+              </View>
+            )}
+
+            <View style={styles.inputContainer}>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Email Address</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+                placeholder="name@example.com"
+                placeholderTextColor={colors.textTertiary}
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+              />
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Password</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+                placeholder="••••••••"
+                placeholderTextColor={colors.textTertiary}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+              />
+            </View>
+
+            <TouchableOpacity
+              style={[styles.button, { backgroundColor: colors.primary }]}
+              onPress={handleEmailAuth}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              {loading ? <ActivityIndicator color="#fff" /> : (
+                <Text style={styles.buttonText}>{isSignUp ? 'Create Account' : 'Sign In'}</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.toggleButton} onPress={() => setIsSignUp(!isSignUp)}>
+              <Text style={[styles.toggleText, { color: colors.primary }]}>
+                {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={[styles.footerText, { color: colors.textTertiary }]}>
+            By continuing, you agree to the{'\n'}
+            <Text style={[styles.link, { color: colors.primary }]}>Terms of Service</Text> and{' '}
+            <Text style={[styles.link, { color: colors.primary }]}>Privacy Policy</Text>.
+          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -136,88 +126,20 @@ export default function AuthScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  scrollContent: {
-    flexGrow: 1,
-  },
-  content: {
-    flex: 1,
-    padding: 24,
-    justifyContent: 'center',
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    textAlign: 'center',
-    color: '#1E293B',
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#64748B',
-    marginBottom: 40,
-    textAlign: 'center',
-  },
-  form: {
-    width: '100%',
-  },
-  inputContainer: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#475569',
-    marginBottom: 8,
-  },
-  input: {
-    height: 52,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    color: '#1E293B',
-  },
-  button: {
-    height: 56,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: '100%',
-    marginTop: 8,
-  },
-  primaryButton: {
-    backgroundColor: '#3B82F6',
-  },
-  primaryButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#fff',
-  },
-
-  toggleButton: {
-    marginTop: 24,
-    alignItems: 'center',
-  },
-  toggleText: {
-    color: '#3B82F6',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  footerText: {
-    marginTop: 40,
-    fontSize: 12,
-    color: '#94A3B8',
-    textAlign: 'center',
-    lineHeight: 18,
-  },
-  link: {
-    color: '#3B82F6',
-    fontWeight: '500',
-  },
+  container: { flex: 1 },
+  scrollContent: { flexGrow: 1, padding: 24, justifyContent: 'center' },
+  brandWrap: { alignItems: 'center', marginBottom: 36 },
+  logoCircle: { width: 72, height: 72, borderRadius: 36, justifyContent: 'center', alignItems: 'center', marginBottom: 16 },
+  title: { fontSize: 32, fontWeight: '800', marginBottom: 8 },
+  subtitle: { fontSize: 14, textAlign: 'center', lineHeight: 20, paddingHorizontal: 16 },
+  form: { width: '100%' },
+  inputContainer: { marginBottom: 18 },
+  label: { fontSize: 13, fontWeight: '600', marginBottom: 8 },
+  input: { height: 52, borderRadius: 14, paddingHorizontal: 16, fontSize: 15, borderWidth: 1 },
+  button: { height: 54, borderRadius: 14, justifyContent: 'center', alignItems: 'center', width: '100%', marginTop: 6 },
+  buttonText: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  toggleButton: { marginTop: 20, alignItems: 'center' },
+  toggleText: { fontSize: 14, fontWeight: '600' },
+  footerText: { marginTop: 32, fontSize: 12, textAlign: 'center', lineHeight: 18 },
+  link: { fontWeight: '500' },
 });

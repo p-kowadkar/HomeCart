@@ -95,8 +95,9 @@ function MainTabNavigator() {
         name="List"
         component={ListScreen}
         options={{
+          tabBarLabel: 'Recipes',
           tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="clipboard-list" size={size} color={color} />
+            <MaterialCommunityIcons name="silverware-fork-knife" size={size} color={color} />
           ),
         }}
       />

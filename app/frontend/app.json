@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
-    "scheme": "cartographer",
+    "name": "HomeCart",
+    "slug": "homecart",
+    "scheme": "homecart",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -15,10 +15,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.saumay.cartographer"
+      "bundleIdentifier": "com.homecart.app"
     },
     "android": {
-      "package": "com.saumay.cartographer",
+      "package": "com.homecart.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -34,8 +34,14 @@
       "expo-web-browser",
       [
         "expo-camera",
-        { "cameraPermission": "Allow Cartographer to access your camera to scan grocery products." }
+        { "cameraPermission": "Allow HomeCart to access your camera to scan grocery products." }
       ]
-    ]
+    ],
+    "owner": "pkowadkar",
+    "extra": {
+      "eas": {
+        "projectId": "e75b1978-b262-4c9e-ad3b-12a0ecf461f3"
+      }
+    }
   }
 }

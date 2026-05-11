@@ -1,0 +1,30 @@
+# Render Blueprint for the HomeCart FastAPI backend.
+# Connect this repo on render.com → New → Blueprint → point at this file.
+# Render will provision the web service, install deps, and run uvicorn.
+#
+# REQUIRED ENV VARS (set these in the Render dashboard, NOT in this file):
+#   SUPABASE_URL              - copy from app/backend/.env
+#   SUPABASE_SERVICE_KEY      - copy from app/backend/.env
+#   OPENROUTER_API_KEY        - copy from app/backend/.env
+#   GOOGLE_MAPS_API_KEY       - copy from app/backend/.env
+#
+# Optional (override default model routing):
+#   LLM_BASE_URL              - default https://openrouter.ai/api/v1
+#   LLM_VISION_MODEL          - default anthropic/claude-sonnet-4.6
+#   LLM_TEXT_MODEL            - default anthropic/claude-haiku-4.5
+
+services:
+  - type: web
+    name: homecart-backend
+    runtime: python
+    rootDir: app/backend
+    plan: free
+    region: oregon
+    branch: dev
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
