@@ -22,44 +22,60 @@ Built as a hackathon project (the team won 🥇) and now being polished into a r
 ## Architecture
 
 ```mermaid
+%%{init: {'theme':'dark', 'themeVariables': {'fontSize':'13px', 'fontFamily':'-apple-system, system-ui, sans-serif', 'lineColor':'#475569'}}}%%
 flowchart TB
-    subgraph Mobile["📱 React Native + Expo (Android)"]
-        UI[Tab Screens<br/>Home · Map · MagicLens · Recipes · Profile]
-        Settings[Settings<br/>BYOK key input]
-        SecureStore[(SecureStore<br/>Android Keystore /<br/>iOS Keychain)]
-        apiFetch[apiFetch wrapper<br/>auto-attaches BYOK headers]
-        Settings -->|saves| SecureStore
-        SecureStore -->|read at request time| apiFetch
-        UI -->|/scan /recipe /stores/nearby| apiFetch
+    subgraph Mobile["&nbsp;📱 React Native + Expo (Android)&nbsp;"]
+        direction TB
+        UI["Home · Map · Scan<br/>Recipes · Profile"]:::mobile
+        Settings["Settings → BYOK"]:::mobile
+        SS[("SecureStore<br/>Keystore-backed")]:::mobileData
+        Api["apiFetch<br/>+ BYOK headers"]:::mobile
+        Settings --> SS
+        SS --> Api
+        UI --> Api
     end
 
-    subgraph Backend["🐍 FastAPI on Render"]
-        Endpoints["/scan · /recipe · /stores/nearby · /healthz"]
-        get_byok[get_byok dependency<br/>extracts X-User-* headers]
-        Providers[providers.py<br/>OpenRouter / OpenAI / Anthropic<br/>auto-routed by key prefix]
-        Ranker[Store ranking engine<br/>cuisine / product-aware<br/>recipe coverage]
-        Endpoints --> get_byok
-        get_byok --> Providers
-        get_byok --> Ranker
+    subgraph Backend["&nbsp;🐍 FastAPI on Render&nbsp;"]
+        direction TB
+        Ep["/scan · /recipe<br/>/stores/nearby · /healthz"]:::backend
+        ByokDep["get_byok dependency<br/>extracts X-User-* headers"]:::backend
+        Prov["providers.py<br/>routes by key prefix"]:::backend
+        Rank["Store ranker<br/>cuisine + product-aware"]:::backend
+        Ep --> ByokDep
+        ByokDep --> Prov
+        ByokDep --> Rank
     end
 
-    subgraph External["☁️ External services"]
-        OpenRouter[OpenRouter<br/>Claude Sonnet 4.6 + Haiku 4.5]
-        OpenAI[OpenAI<br/>GPT-4o · GPT-4o-mini]
-        Anthropic[Anthropic Messages API<br/>Claude 4.x direct]
-        Places[Google Places API New<br/>Text Search]
-        Supabase[(Supabase<br/>Postgres + Auth<br/>RLS-protected)]
-        UptimeRobot[UptimeRobot<br/>5-min keep-alive]
+    subgraph LLMs["&nbsp;🧠 LLM providers&nbsp;"]
+        direction TB
+        OR["OpenRouter<br/>Claude Sonnet 4.6<br/>+ Haiku 4.5"]:::llm
+        OA["OpenAI<br/>GPT-4o · GPT-4o-mini"]:::llm
+        AN["Anthropic Messages<br/>Claude 4.x direct"]:::llm
     end
 
-    apiFetch -.HTTPS.-> Endpoints
-    Providers -->|sk-or-*| OpenRouter
-    Providers -->|sk-*| OpenAI
-    Providers -->|sk-ant-*| Anthropic
-    Ranker --> Places
-    Ranker --> Supabase
-    Endpoints --> Supabase
-    UptimeRobot -.GET /healthz every 5m.-> Endpoints
+    subgraph DataGeo["&nbsp;💾 Data + Geo&nbsp;"]
+        direction TB
+        SB[("Supabase<br/>Postgres + Auth · RLS")]:::data
+        GP["Google Places (New)<br/>Text Search"]:::data
+    end
+
+    Watch["🕐 UptimeRobot<br/>5-min /healthz ping"]:::monitor
+
+    Api ===>|HTTPS| Ep
+    Prov -.->|sk-or-*| OR
+    Prov -.->|sk-*| OA
+    Prov -.->|sk-ant-*| AN
+    Rank --> GP
+    Rank --> SB
+    Ep --> SB
+    Watch -.->|keep-alive| Ep
+
+    classDef mobile fill:#0F172A,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
+    classDef mobileData fill:#0F172A,stroke:#60A5FA,stroke-width:2px,color:#DBEAFE
+    classDef backend fill:#0F172A,stroke:#A78BFA,stroke-width:2px,color:#EDE9FE
+    classDef llm fill:#0F172A,stroke:#34D399,stroke-width:2px,color:#D1FAE5
+    classDef data fill:#0F172A,stroke:#FBBF24,stroke-width:2px,color:#FEF3C7
+    classDef monitor fill:#0F172A,stroke:#F472B6,stroke-width:2px,color:#FCE7F3
 ```
 
 ---
@@ -69,21 +85,22 @@ flowchart TB
 ### Magic Lens scan flow
 
 ```mermaid
+%%{init: {'theme':'dark', 'themeVariables': {'fontSize':'13px', 'fontFamily':'-apple-system, system-ui, sans-serif', 'actorBkg':'#1E3A8A', 'actorBorder':'#3B82F6', 'actorTextColor':'#DBEAFE', 'noteBkgColor':'#1F2937', 'noteBorderColor':'#475569', 'signalColor':'#94A3B8'}}}%%
 sequenceDiagram
     actor User
-    participant App as 📱 App (MagicLens)
+    participant App as 📱 MagicLens
     participant API as FastAPI /scan
-    participant LLM as Claude (vision)
-    participant DB as Supabase
+    participant LLM as 🧠 Claude vision
+    participant DB as 💾 Supabase
 
     User->>App: Tap shutter
     App->>App: takePictureAsync → base64
-    App->>API: POST /scan { image_base64, user_profile }
-    API->>LLM: vision call with prompt<br/>(detect product + cultural equivalent +<br/>availability_breadth + preferred_store_types)
-    LLM-->>API: JSON { detected_product, cultural_equivalent,<br/>match_score, ai_tip, real_version_name,<br/>availability_breadth, preferred_store_types }
-    API->>DB: insert into scans (persisted history)
+    App->>API: POST /scan { image, user_profile }
+    API->>LLM: vision prompt with cuisine context
+    LLM-->>API: JSON: product · equivalent · score<br/>· real_version · availability_breadth<br/>· preferred_store_types
+    API->>DB: insert into scans
     API-->>App: ScanResult
-    App->>User: Show match card with score, tip, "Get the real thing →"
+    App->>User: Match card · "Get the real thing →"
     User->>App: Tap "Get the real thing"
     App->>App: navigate('Map', { product_context })
 ```
@@ -91,40 +108,60 @@ sequenceDiagram
 ### Recipe → store coverage flow
 
 ```mermaid
+%%{init: {'theme':'dark', 'themeVariables': {'fontSize':'13px', 'fontFamily':'-apple-system, system-ui, sans-serif', 'lineColor':'#475569'}}}%%
 flowchart LR
-    Dish["User types<br/>'butter chicken'"] --> Recipe[POST /recipe]
-    Recipe --> Claude[Claude Haiku 4.5<br/>via OpenRouter]
-    Claude --> Ings["8–15 ingredients<br/>each tagged with<br/>availability_breadth +<br/>preferred_store_types"]
-    Ings --> Save[(Supabase<br/>shopping_lists +<br/>list_items)]
-    Ings --> Display[Recipes screen<br/>shows ingredient cards]
-    Display --> Either{User chooses}
-    Either -->|per-ingredient| Single["Tap one row →<br/>Map filtered to<br/>that single item"]
-    Either -->|whole list| Multi["Tap 'Find stores<br/>for this list' →<br/>aggregate product_context"]
-    Multi --> Nearby["POST /stores/nearby<br/>with needed_items"]
+    Dish["📝 'butter chicken'"]:::input --> Recipe["POST /recipe"]:::backend
+    Recipe --> Claude["🧠 Haiku 4.5<br/>via OpenRouter"]:::llm
+    Claude --> Ings["8-15 ingredients<br/>+ availability_breadth<br/>+ preferred_store_types"]:::data
+    Ings --> Save[("💾 Supabase<br/>shopping_lists +<br/>list_items")]:::data
+    Ings --> Display["Recipes screen"]:::mobile
+    Display --> Either{User picks}
+    Either -->|one row| Single["Single-item Map"]:::mobile
+    Either -->|Find stores<br/>for this list| Multi["aggregate<br/>product_context"]:::mobile
+    Multi --> Nearby["POST /stores/nearby<br/>+ needed_items"]:::backend
     Single --> Nearby
-    Nearby --> Places[Google Places<br/>Text Search]
-    Nearby --> Personas[(chain_personas<br/>30 chains classified)]
-    Places --> Rank["Per-store coverage:<br/>count how many<br/>preferred_store_types<br/>match each ingredient"]
+    Nearby --> Places["🗺️ Google Places<br/>Text Search"]:::external
+    Nearby --> Personas[("chain_personas<br/>30 chains")]:::data
+    Places --> Rank["Per-store coverage"]:::backend
     Personas --> Rank
-    Rank --> Filter["Drop 0-coverage stores;<br/>sort by distance ASC,<br/>coverage DESC"]
-    Filter --> Map["Map sheet:<br/>Patel Brothers 13/15<br/>Whole Foods 11/15<br/>Walmart 9/15"]
+    Rank --> Filter["Filter 0-coverage<br/>sort distance + coverage"]:::backend
+    Filter --> Map["🛒 Patel 13/15<br/>Whole Foods 11/15<br/>Walmart 9/15"]:::result
+
+    classDef input fill:#0F172A,stroke:#94A3B8,stroke-width:2px,color:#F1F5F9
+    classDef mobile fill:#0F172A,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
+    classDef backend fill:#0F172A,stroke:#A78BFA,stroke-width:2px,color:#EDE9FE
+    classDef llm fill:#0F172A,stroke:#34D399,stroke-width:2px,color:#D1FAE5
+    classDef data fill:#0F172A,stroke:#FBBF24,stroke-width:2px,color:#FEF3C7
+    classDef external fill:#0F172A,stroke:#F472B6,stroke-width:2px,color:#FCE7F3
+    classDef result fill:#0F172A,stroke:#10B981,stroke-width:3px,color:#D1FAE5
 ```
 
 ### BYOK request routing
 
 ```mermaid
+%%{init: {'theme':'dark', 'themeVariables': {'fontSize':'13px', 'fontFamily':'-apple-system, system-ui, sans-serif', 'lineColor':'#475569'}}}%%
 flowchart TB
-    Settings[Settings screen] -->|user pastes key| SS[(SecureStore)]
-    Request[Any /scan /recipe /stores/nearby call] --> apiFetch
-    SS -->|loadByokKeys| apiFetch
-    apiFetch -->|attach headers<br/>X-User-LLM-Key<br/>X-User-GCP-Key<br/>X-User-Tavily-Key<br/>X-User-Firecrawl-Key| Backend
-    Backend --> get_byok[get_byok Depends]
-    get_byok --> Detect{LLM key<br/>prefix?}
-    Detect -->|sk-ant-*| Anth[Anthropic adapter<br/>native Messages API<br/>image.source.base64]
-    Detect -->|sk-or-*| OR[OpenRouter adapter<br/>OpenAI-compat shape<br/>anthropic/claude-* models]
-    Detect -->|sk-*| OAI[OpenAI adapter<br/>OpenAI-compat shape<br/>gpt-4o + gpt-4o-mini]
-    Detect -->|no key| Env[fallback to env<br/>OPENROUTER_API_KEY]
-    Anth & OR & OAI & Env --> Reply[Assistant text]
+    Settings["🔑 Settings screen"]:::mobile -->|paste key| SS[("SecureStore")]:::data
+    Request["Any /scan /recipe<br/>/stores/nearby call"]:::mobile --> Api["apiFetch"]:::mobile
+    SS -->|loadByokKeys| Api
+    Api -->|"attach X-User-LLM-Key<br/>X-User-GCP-Key<br/>X-User-Tavily-Key<br/>X-User-Firecrawl-Key"| Backend["FastAPI endpoint"]:::backend
+    Backend --> ByokDep["get_byok"]:::backend
+    ByokDep --> Detect{"LLM key prefix?"}:::decision
+    Detect -->|sk-ant-*| Anth["🟣 Anthropic adapter<br/>Messages API native"]:::anthropic
+    Detect -->|sk-or-*| OR["🔵 OpenRouter adapter<br/>Claude via OpenAI-compat"]:::openrouter
+    Detect -->|sk-*| OAI["🟢 OpenAI adapter<br/>GPT-4o + 4o-mini"]:::openai
+    Detect -->|no key| Env["⚪ env fallback<br/>OPENROUTER_API_KEY"]:::fallback
+    Anth & OR & OAI & Env --> Reply["💬 Assistant text"]:::result
+
+    classDef mobile fill:#0F172A,stroke:#3B82F6,stroke-width:2px,color:#DBEAFE
+    classDef backend fill:#0F172A,stroke:#A78BFA,stroke-width:2px,color:#EDE9FE
+    classDef data fill:#0F172A,stroke:#FBBF24,stroke-width:2px,color:#FEF3C7
+    classDef decision fill:#0F172A,stroke:#F59E0B,stroke-width:2px,color:#FEF3C7
+    classDef anthropic fill:#0F172A,stroke:#D97757,stroke-width:2px,color:#FED7AA
+    classDef openrouter fill:#0F172A,stroke:#60A5FA,stroke-width:2px,color:#DBEAFE
+    classDef openai fill:#0F172A,stroke:#10A37F,stroke-width:2px,color:#A7F3D0
+    classDef fallback fill:#0F172A,stroke:#64748B,stroke-width:2px,color:#CBD5E1
+    classDef result fill:#0F172A,stroke:#10B981,stroke-width:3px,color:#D1FAE5
 ```
 
 ---
@@ -226,6 +263,7 @@ Keys live only in your device's hardware-backed secure store. They're attached a
 ## Database schema
 
 ```mermaid
+%%{init: {'theme':'dark', 'themeVariables': {'fontSize':'12px', 'fontFamily':'-apple-system, system-ui, sans-serif'}}}%%
 erDiagram
     profiles ||--o{ scans : "owns"
     profiles ||--o{ shopping_lists : "owns"
