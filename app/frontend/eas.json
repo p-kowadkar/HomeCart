@@ -22,7 +22,19 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://homecart-backend.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://homecart-backend.onrender.com",
+        "EXPO_PUBLIC_BYOK_ONLY": "false"
+      }
+    },
+    "byok-preview": {
+      "distribution": "internal",
+      "credentialsSource": "local",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://homecart-backend.onrender.com",
+        "EXPO_PUBLIC_BYOK_ONLY": "true"
       }
     },
     "production": {

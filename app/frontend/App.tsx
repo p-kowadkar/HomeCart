@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, View, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
@@ -9,13 +9,17 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider, useTheme } from './theme/ThemeContext';
 import { darkColors } from './theme/colors';
+import { loadByokKeys } from './lib/byok';
 import AuthScreen from './screens/AuthScreen';
 import OnboardingScreen from './screens/OnboardingScreen';
+import ByokOnboardingScreen from './screens/ByokOnboardingScreen';
 import HomeScreen from './screens/HomeScreen';
 import MapScreen from './screens/MapScreen';
 import ListScreen from './screens/ListScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import MagicLensScreen from './screens/MagicLensScreen';
+
+const BYOK_ONLY = process.env.EXPO_PUBLIC_BYOK_ONLY === 'true';
 
 // Navigation theme wired to dark palette
 const navTheme = {
@@ -117,6 +121,18 @@ function MainTabNavigator() {
 function AppContent() {
   const { user, profile, loading } = useAuth();
   const { colors } = useTheme();
+  // Tracks whether the BYOK-only build has a usable LLM key. `null` until first check.
+  const [hasLlmKey, setHasLlmKey] = useState<boolean | null>(BYOK_ONLY ? null : true);
+
+  useEffect(() => {
+    if (!BYOK_ONLY) return;
+    if (!user) return;  // re-check after sign-in
+    loadByokKeys().then(k => setHasLlmKey(!!k.llmKey));
+  }, [user]);
+
+  const refreshLlmKey = () => {
+    loadByokKeys().then(k => setHasLlmKey(!!k.llmKey));
+  };
 
   if (loading) {
     return (
@@ -140,6 +156,20 @@ function AppContent() {
 
   if (!profile?.onboarding_completed) {
     return <OnboardingScreen />;
+  }
+
+  // BYOK-only build: block the main UI until the user has stored an LLM key.
+  if (BYOK_ONLY) {
+    if (hasLlmKey === null) {
+      return (
+        <View style={[styles.centered, { backgroundColor: colors.bg }]}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      );
+    }
+    if (!hasLlmKey) {
+      return <ByokOnboardingScreen onConfigured={refreshLlmKey} />;
+    }
   }
 
   return (
