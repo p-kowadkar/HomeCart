@@ -7,8 +7,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme/ThemeContext';
 import {
-  ByokKeys, LLMProvider, loadByokKeys, saveByokKeys, clearAllByokKeys,
-  detectLLMProvider, resolveProvider, providerDisplayName,
+  ByokKeys, loadByokKeys, saveByokKeys, clearAllByokKeys,
+  detectLLMProvider, providerDisplayName,
 } from '../lib/byok';
 import {
   ModelOption, modelsForProvider, visionModels,
@@ -21,26 +21,10 @@ interface Props {
   onClose: () => void;
 }
 
-interface ProviderLink {
-  label: string;
-  url: string;
-}
-
-const LLM_PROVIDER_LINKS: ProviderLink[] = [
+const LLM_PROVIDER_LINKS = [
   { label: 'Get an OpenRouter key', url: 'https://openrouter.ai/keys' },
   { label: 'Get an OpenAI key', url: 'https://platform.openai.com/api-keys' },
   { label: 'Get an Anthropic key', url: 'https://console.anthropic.com/settings/keys' },
-];
-
-const GCP_LINK = 'https://console.cloud.google.com/apis/credentials';
-const TAVILY_LINK = 'https://app.tavily.com/home';
-const FIRECRAWL_LINK = 'https://www.firecrawl.dev/app/api-keys';
-
-const PROVIDERS: { value: LLMProvider; label: string }[] = [
-  { value: 'auto', label: 'Auto-detect from key' },
-  { value: 'openrouter', label: 'OpenRouter' },
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'anthropic', label: 'Anthropic' },
 ];
 
 export default function SettingsScreen({ visible, onClose }: Props) {
@@ -48,7 +32,7 @@ export default function SettingsScreen({ visible, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [keys, setKeys] = useState<ByokKeys>({});
-  const [reveal, setReveal] = useState<Record<string, boolean>>({});
+  const [reveal, setReveal] = useState(false);
   const [orModels, setOrModels] = useState<ModelOption[]>([]);
   const [orFetching, setOrFetching] = useState(false);
   const [modelPicker, setModelPicker] = useState<null | { kind: 'vision' | 'text' }>(null);
@@ -66,21 +50,26 @@ export default function SettingsScreen({ visible, onClose }: Props) {
     })();
   }, [visible]);
 
-  const effectiveProvider = resolveProvider(keys);
+  // Single source of truth: provider is derived from the key prefix. The backend uses
+  // the same logic in providers.py:detect_provider, so what we show in the picker is
+  // what actually gets routed. There is intentionally no explicit-provider override —
+  // a previous version of this screen had one, and it silently diverged the model list
+  // from the backend's routing (sk-or key + manually-picked Anthropic-native model ID
+  // → backend called OpenRouter with the wrong model ID → silent 404).
+  const detectedProvider = detectLLMProvider(keys.llmKey);
 
-  // Live-fetch OpenRouter models when settings open AND provider resolves to openrouter.
   useEffect(() => {
-    if (!visible || effectiveProvider !== 'openrouter') return;
+    if (!visible || detectedProvider !== 'openrouter') return;
     setOrFetching(true);
     fetchOpenRouterModels()
       .then(setOrModels)
       .catch(() => setOrModels([]))  // silently fall back to hardcoded list
       .finally(() => setOrFetching(false));
-  }, [visible, effectiveProvider]);
+  }, [visible, detectedProvider]);
 
   const availableModels = useMemo(
-    () => modelsForProvider(effectiveProvider, orModels),
-    [effectiveProvider, orModels],
+    () => modelsForProvider(detectedProvider, orModels),
+    [detectedProvider, orModels],
   );
 
   const visionOnly = useMemo(() => sortByPrice(visionModels(availableModels)), [availableModels]);
@@ -90,7 +79,7 @@ export default function SettingsScreen({ visible, onClose }: Props) {
     setSaving(true);
     try {
       await saveByokKeys(keys);
-      Alert.alert('Saved', 'Your keys and model picks are stored securely on this device only.');
+      Alert.alert('Saved', 'Your key and model picks are stored securely on this device only.');
       onClose();
     } catch (e: any) {
       Alert.alert('Save failed', e.message || 'Unknown error');
@@ -101,8 +90,8 @@ export default function SettingsScreen({ visible, onClose }: Props) {
 
   const onClearAll = () => {
     Alert.alert(
-      'Clear all keys?',
-      'HomeCart will go back to using its default keys for all API calls.',
+      'Clear your LLM key?',
+      'You will be sent back to the BYOK setup screen until you add a key again.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -111,32 +100,26 @@ export default function SettingsScreen({ visible, onClose }: Props) {
           onPress: async () => {
             await clearAllByokKeys();
             setKeys({});
-            Alert.alert('Cleared', 'All BYOK settings removed from this device.');
+            Alert.alert('Cleared', 'Your LLM key has been removed from this device.');
           },
         },
       ],
     );
   };
 
-  // When user pastes a key OR changes provider, pre-fill sensible model defaults.
-  const onProviderChange = (p: LLMProvider) => {
-    const resolved = p === 'auto' ? detectLLMProvider(keys.llmKey) : p;
-    setKeys(prev => ({
-      ...prev,
-      llmProvider: p,
-      llmVisionModel: prev.llmVisionModel || defaultVisionModel(resolved),
-      llmTextModel: prev.llmTextModel || defaultTextModel(resolved),
-    }));
-  };
-
+  // Whenever the key changes, reset models if the detected provider changed (stale
+  // models from a different provider will silently fail at API call time — e.g.
+  // OpenRouter API doesn't know Anthropic-native model IDs).
   const onLlmKeyChange = (v: string) => {
     setKeys(prev => {
       const next = { ...prev, llmKey: v };
-      // If provider is auto, populate defaults based on detected key prefix
-      if (!prev.llmProvider || prev.llmProvider === 'auto') {
-        const detected = detectLLMProvider(v);
-        if (!next.llmVisionModel) next.llmVisionModel = defaultVisionModel(detected);
-        if (!next.llmTextModel) next.llmTextModel = defaultTextModel(detected);
+      const prevProvider = detectLLMProvider(prev.llmKey);
+      const nextProvider = detectLLMProvider(v);
+      if (prevProvider !== nextProvider || !next.llmVisionModel) {
+        next.llmVisionModel = defaultVisionModel(nextProvider);
+      }
+      if (prevProvider !== nextProvider || !next.llmTextModel) {
+        next.llmTextModel = defaultTextModel(nextProvider);
       }
       return next;
     });
@@ -147,9 +130,9 @@ export default function SettingsScreen({ visible, onClose }: Props) {
       <SafeAreaView style={[styles.container, { backgroundColor: colors.bg }]} edges={['top']}>
         <View style={styles.header}>
           <View style={{ flex: 1 }}>
-            <Text style={[styles.title, { color: colors.textPrimary }]}>API Keys (BYOK)</Text>
+            <Text style={[styles.title, { color: colors.textPrimary }]}>LLM API Key</Text>
             <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-              Use your own provider credits and pick your own models. Keys stay on this device.
+              Use your own provider credits. Key stays on this device — never sent to HomeCart's servers.
             </Text>
           </View>
           <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -163,71 +146,22 @@ export default function SettingsScreen({ visible, onClose }: Props) {
           </View>
         ) : (
           <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-            <Section title="LLM Provider" icon="brain"
-              description="One key, with optional explicit provider + model overrides. Without an LLM key, HomeCart's free-tier limits apply (10 scans + 3 recipes/day)."
+            <Section title="Your key" icon="key-variant"
+              description="Paste an OpenRouter, OpenAI, or Anthropic key. We auto-detect which one it is from the prefix."
               colors={colors}>
               <KeyInput
                 value={keys.llmKey || ''}
                 onChangeText={onLlmKeyChange}
                 placeholder="sk-or-... / sk-... / sk-ant-..."
-                reveal={!!reveal.llmKey}
-                onToggleReveal={() => setReveal(r => ({ ...r, llmKey: !r.llmKey }))}
+                reveal={reveal}
+                onToggleReveal={() => setReveal(r => !r)}
                 colors={colors}
               />
-
-              <Text style={[styles.fieldLabel, { color: colors.textTertiary }]}>PROVIDER</Text>
-              <View style={styles.providerRow}>
-                {PROVIDERS.map(p => {
-                  const isActive = (keys.llmProvider || 'auto') === p.value;
-                  return (
-                    <TouchableOpacity
-                      key={p.value}
-                      onPress={() => onProviderChange(p.value)}
-                      style={[
-                        styles.providerChip,
-                        { borderColor: isActive ? colors.primary : colors.border,
-                          backgroundColor: isActive ? colors.primarySubtle : 'transparent' },
-                      ]}
-                    >
-                      <Text style={{ color: isActive ? colors.primary : colors.textSecondary, fontSize: 12, fontWeight: '600' }}>
-                        {p.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-              {keys.llmProvider === 'auto' || !keys.llmProvider ? (
+              {keys.llmKey ? (
                 <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>
-                  Effective: {providerDisplayName(effectiveProvider)} (from key prefix)
+                  Detected: {providerDisplayName(detectedProvider)} (from key prefix)
                 </Text>
               ) : null}
-
-              {effectiveProvider !== 'auto' && (
-                <>
-                  <Text style={[styles.fieldLabel, { color: colors.textTertiary, marginTop: 18 }]}>
-                    VISION MODEL (for product scans)
-                    {orFetching && effectiveProvider === 'openrouter' && (
-                      <Text style={{ color: colors.textTertiary, fontSize: 10 }}>  · fetching…</Text>
-                    )}
-                  </Text>
-                  <ModelButton
-                    model={visionOnly.find(m => m.id === keys.llmVisionModel) || null}
-                    fallbackLabel={keys.llmVisionModel || 'Pick a model'}
-                    colors={colors}
-                    onPress={() => setModelPicker({ kind: 'vision' })}
-                  />
-
-                  <Text style={[styles.fieldLabel, { color: colors.textTertiary, marginTop: 14 }]}>
-                    TEXT MODEL (for recipe parsing)
-                  </Text>
-                  <ModelButton
-                    model={allModels.find(m => m.id === keys.llmTextModel) || null}
-                    fallbackLabel={keys.llmTextModel || 'Pick a model'}
-                    colors={colors}
-                    onPress={() => setModelPicker({ kind: 'text' })}
-                  />
-                </>
-              )}
 
               <View style={styles.linkRow}>
                 {LLM_PROVIDER_LINKS.map(l => (
@@ -238,57 +172,40 @@ export default function SettingsScreen({ visible, onClose }: Props) {
               </View>
             </Section>
 
-            <Section title="Google Maps / Places" icon="map"
-              description="For the store-finder on the Map tab. Optional — without this, HomeCart's default Maps key is used."
-              colors={colors}>
-              <KeyInput
-                value={keys.gcpKey || ''}
-                onChangeText={v => setKeys({ ...keys, gcpKey: v })}
-                placeholder="AIza..."
-                reveal={!!reveal.gcpKey}
-                onToggleReveal={() => setReveal(r => ({ ...r, gcpKey: !r.gcpKey }))}
-                colors={colors}
-              />
-              <TouchableOpacity onPress={() => Linking.openURL(GCP_LINK)}>
-                <Text style={[styles.linkText, { color: colors.primary }]}>Google Cloud credentials →</Text>
-              </TouchableOpacity>
-            </Section>
+            {keys.llmKey ? (
+              <Section title="Models" icon="brain"
+                description={`Only ${providerDisplayName(detectedProvider)} models are shown — these are the only ones that will work with your key.`}
+                colors={colors}>
+                <Text style={[styles.fieldLabel, { color: colors.textTertiary }]}>
+                  VISION MODEL (product scans)
+                  {orFetching && detectedProvider === 'openrouter' && (
+                    <Text style={{ color: colors.textTertiary, fontSize: 10 }}>  · fetching live list…</Text>
+                  )}
+                </Text>
+                <ModelButton
+                  model={visionOnly.find(m => m.id === keys.llmVisionModel) || null}
+                  fallbackLabel={keys.llmVisionModel || 'Pick a model'}
+                  colors={colors}
+                  onPress={() => setModelPicker({ kind: 'vision' })}
+                />
 
-            <Section title="Tavily (coming soon)" icon="magnify"
-              description="Planned: web search fallback when Google Places returns nothing useful. Storing a key now is harmless — it will be used once the backend integration ships."
-              colors={colors}>
-              <KeyInput
-                value={keys.tavilyKey || ''}
-                onChangeText={v => setKeys({ ...keys, tavilyKey: v })}
-                placeholder="tvly-..."
-                reveal={!!reveal.tavilyKey}
-                onToggleReveal={() => setReveal(r => ({ ...r, tavilyKey: !r.tavilyKey }))}
-                colors={colors}
-              />
-              <TouchableOpacity onPress={() => Linking.openURL(TAVILY_LINK)}>
-                <Text style={[styles.linkText, { color: colors.primary }]}>Get a Tavily key →</Text>
-              </TouchableOpacity>
-            </Section>
+                <Text style={[styles.fieldLabel, { color: colors.textTertiary, marginTop: 14 }]}>
+                  TEXT MODEL (recipe parsing)
+                </Text>
+                <ModelButton
+                  model={allModels.find(m => m.id === keys.llmTextModel) || null}
+                  fallbackLabel={keys.llmTextModel || 'Pick a model'}
+                  colors={colors}
+                  onPress={() => setModelPicker({ kind: 'text' })}
+                />
+              </Section>
+            ) : null}
 
-            <Section title="Firecrawl (coming soon)" icon="fire"
-              description='Planned: scrape "where to buy" pages from supermarket websites to enrich scans. Storing a key now is harmless — it will be used once the backend integration ships.'
-              colors={colors}>
-              <KeyInput
-                value={keys.firecrawlKey || ''}
-                onChangeText={v => setKeys({ ...keys, firecrawlKey: v })}
-                placeholder="fc-..."
-                reveal={!!reveal.firecrawlKey}
-                onToggleReveal={() => setReveal(r => ({ ...r, firecrawlKey: !r.firecrawlKey }))}
-                colors={colors}
-              />
-              <TouchableOpacity onPress={() => Linking.openURL(FIRECRAWL_LINK)}>
-                <Text style={[styles.linkText, { color: colors.primary }]}>Get a Firecrawl key →</Text>
+            {keys.llmKey ? (
+              <TouchableOpacity onPress={onClearAll} style={styles.clearLink}>
+                <Text style={{ color: colors.error, fontSize: 13, fontWeight: '600' }}>Clear key</Text>
               </TouchableOpacity>
-            </Section>
-
-            <TouchableOpacity onPress={onClearAll} style={styles.clearLink}>
-              <Text style={{ color: colors.error, fontSize: 13, fontWeight: '600' }}>Clear all keys</Text>
-            </TouchableOpacity>
+            ) : null}
           </ScrollView>
         )}
 
@@ -437,7 +354,7 @@ function ModelPickerModal({ visible, kind, models, currentId, colors, onPick, on
           }}
           ListEmptyComponent={
             <View style={{ padding: 40, alignItems: 'center' }}>
-              <Text style={{ color: colors.textSecondary }}>No models available. Pick a provider first.</Text>
+              <Text style={{ color: colors.textSecondary }}>No models available. Add a key first.</Text>
             </View>
           }
         />
@@ -463,9 +380,7 @@ const styles = StyleSheet.create({
   input: { flex: 1, paddingHorizontal: 12, paddingVertical: 12, fontSize: 14, fontFamily: 'monospace' },
   revealBtn: { padding: 12 },
   fieldLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1, marginTop: 14, marginBottom: 6 },
-  fieldHint: { fontSize: 11, marginTop: 6 },
-  providerRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  providerChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
+  fieldHint: { fontSize: 11, marginTop: 8 },
   modelButton: {
     flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 10, borderWidth: 1, gap: 8,
   },

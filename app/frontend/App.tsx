@@ -9,7 +9,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider, useTheme } from './theme/ThemeContext';
 import { darkColors } from './theme/colors';
-import { loadByokKeys } from './lib/byok';
+import { loadByokKeys, clearLegacyByokKeys } from './lib/byok';
 import AuthScreen from './screens/AuthScreen';
 import OnboardingScreen from './screens/OnboardingScreen';
 import ByokOnboardingScreen from './screens/ByokOnboardingScreen';
@@ -123,6 +123,13 @@ function AppContent() {
   const { colors } = useTheme();
   // Tracks whether the BYOK-only build has a usable LLM key. `null` until first check.
   const [hasLlmKey, setHasLlmKey] = useState<boolean | null>(BYOK_ONLY ? null : true);
+
+  // One-shot cleanup of orphaned SecureStore entries from older builds (Maps key,
+  // Tavily, Firecrawl, explicit provider override). Runs once on mount — safe to
+  // call repeatedly because deleteItemAsync is a no-op when the key is absent.
+  useEffect(() => {
+    clearLegacyByokKeys();
+  }, []);
 
   useEffect(() => {
     if (!BYOK_ONLY) return;

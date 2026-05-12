@@ -144,7 +144,7 @@ flowchart TB
     Settings["🔑 Settings screen"]:::mobile -->|paste key| SS[("SecureStore")]:::data
     Request["Any /scan /recipe<br/>/stores/nearby call"]:::mobile --> Api["apiFetch"]:::mobile
     SS -->|loadByokKeys| Api
-    Api -->|"attach X-User-LLM-Key<br/>X-User-GCP-Key<br/>X-User-Tavily-Key<br/>X-User-Firecrawl-Key"| Backend["FastAPI endpoint"]:::backend
+    Api -->|"attach X-User-LLM-Key<br/>X-User-LLM-Vision-Model<br/>X-User-LLM-Text-Model"| Backend["FastAPI endpoint"]:::backend
     Backend --> ByokDep["get_byok"]:::backend
     ByokDep --> Detect{"LLM key prefix?"}:::decision
     Detect -->|sk-ant-*| Anth["🟣 Anthropic adapter<br/>Messages API native"]:::anthropic

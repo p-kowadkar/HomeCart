@@ -73,16 +73,15 @@ async def get_user_id(authorization: Optional[str] = Header(None)) -> Optional[s
 # ============================
 # BYOK HEADER EXTRACTION
 # ============================
-# Per-request user-supplied API keys. If a header is present, the user's key wins;
-# otherwise the env-configured default is used. Keys are NEVER persisted server-side
-# and NEVER logged — only forwarded to the upstream provider for this single call.
+# Per-request user-supplied API keys, scoped to LLM only. Maps, Tavily, Firecrawl are
+# operator-managed (see the BYOK redesign note in CLAUDE.md). Older builds also forwarded
+# X-User-GCP-Key / X-User-Tavily-Key / X-User-Firecrawl-Key — those headers are silently
+# ignored now: most user-supplied Maps keys were Android-restricted, which fails when
+# Render uses them server-side, producing silently-empty store lists.
 class BYOK(BaseModel):
     llm_key: Optional[str] = None
     llm_vision_model: Optional[str] = None
     llm_text_model: Optional[str] = None
-    gcp_key: Optional[str] = None
-    tavily_key: Optional[str] = None
-    firecrawl_key: Optional[str] = None
     user_id: Optional[str] = None  # Supabase user uuid; used for per-user rate limiting on non-BYOK calls.
 
 
@@ -90,18 +89,12 @@ def get_byok(
     x_user_llm_key: Optional[str] = Header(None),
     x_user_llm_vision_model: Optional[str] = Header(None),
     x_user_llm_text_model: Optional[str] = Header(None),
-    x_user_gcp_key: Optional[str] = Header(None),
-    x_user_tavily_key: Optional[str] = Header(None),
-    x_user_firecrawl_key: Optional[str] = Header(None),
     x_user_id: Optional[str] = Header(None),
 ) -> BYOK:
     return BYOK(
         llm_key=x_user_llm_key,
         llm_vision_model=x_user_llm_vision_model,
         llm_text_model=x_user_llm_text_model,
-        gcp_key=x_user_gcp_key,
-        tavily_key=x_user_tavily_key,
-        firecrawl_key=x_user_firecrawl_key,
         user_id=x_user_id,
     )
 
@@ -591,10 +584,10 @@ def _cache_key(lat: float, lon: float, cuisine: Optional[str], product_context: 
     return f"{base},cuisine:{cuisine or 'general'}"
 
 
-async def _search_places(query: str, lat: float, lon: float, radius_m: int = 10000, override_key: Optional[str] = None) -> list:
+async def _search_places(query: str, lat: float, lon: float, radius_m: int = 10000) -> list:
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-Api-Key": (override_key or GOOGLE_MAPS_API_KEY),
+        "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
         # Only request fields we use — keeps us in the cheaper tier
         "X-Goog-FieldMask": (
             "places.id,places.displayName,places.formattedAddress,"
@@ -654,8 +647,10 @@ async def stores_nearby(
     user_id: Optional[str] = Depends(get_user_id),
     byok: BYOK = Depends(get_byok),
 ):
-    effective_gcp_key = byok.gcp_key or GOOGLE_MAPS_API_KEY
-    if not effective_gcp_key:
+    # Maps key is operator-only. User-supplied GCP keys would override this in older
+    # builds, but most user keys were Android-restricted and failed server-side. The
+    # operator key has per-day quota caps for cost protection (see CLAUDE.md).
+    if not GOOGLE_MAPS_API_KEY:
         raise HTTPException(503, "Google Maps API key not configured")
 
     pc = req.product_context
@@ -690,7 +685,7 @@ async def stores_nearby(
     seen_ids: set = set()
     for q in queries:
         try:
-            places = await _search_places(q, req.lat, req.lon, override_key=byok.gcp_key)
+            places = await _search_places(q, req.lat, req.lon)
             for p in places:
                 pid = p.get("id", "")
                 if pid and pid not in seen_ids:

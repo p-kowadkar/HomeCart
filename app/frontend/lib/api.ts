@@ -44,10 +44,10 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
   if (keys.llmKey) headers['X-User-LLM-Key'] = keys.llmKey;
   if (keys.llmVisionModel) headers['X-User-LLM-Vision-Model'] = keys.llmVisionModel;
   if (keys.llmTextModel) headers['X-User-LLM-Text-Model'] = keys.llmTextModel;
-  if (keys.gcpKey) headers['X-User-GCP-Key'] = keys.gcpKey;
-  if (keys.tavilyKey) headers['X-User-Tavily-Key'] = keys.tavilyKey;
-  if (keys.firecrawlKey) headers['X-User-Firecrawl-Key'] = keys.firecrawlKey;
   if (userId) headers['X-User-Id'] = userId;
+  // BYOK is scoped to LLM only — Maps, Tavily, Firecrawl are operator-managed. Older
+  // builds used to forward X-User-GCP-Key / X-User-Tavily-Key / X-User-Firecrawl-Key;
+  // those headers are no longer sent. See lib/byok.ts clearLegacyByokKeys for cleanup.
 
   return fetch(`${API_URL}${path}`, {
     ...options,
