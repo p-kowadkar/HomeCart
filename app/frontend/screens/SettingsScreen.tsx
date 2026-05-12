@@ -27,6 +27,26 @@ const LLM_PROVIDER_LINKS = [
   { label: 'Get an Anthropic key', url: 'https://console.anthropic.com/settings/keys' },
 ];
 
+// On Settings load, swap a stale stored model for the provider's default if it
+// isn't valid for the currently-detected provider. Catches the case where a user
+// switched key types between sessions (e.g. picked an OpenRouter model on an old
+// install, then pasted an Anthropic key — the OpenRouter model ID would silently
+// 404 against Anthropic's API). For OpenRouter we trust the user's pick because
+// the live /models endpoint exposes 300+ models that aren't in our static fallback.
+function autoCorrectModels(loaded: ByokKeys): ByokKeys {
+  const provider = detectLLMProvider(loaded.llmKey);
+  if (provider === 'openrouter') return loaded;
+  const validIds = new Set(modelsForProvider(provider).map(m => m.id));
+  const fixed = { ...loaded };
+  if (fixed.llmVisionModel && !validIds.has(fixed.llmVisionModel)) {
+    fixed.llmVisionModel = defaultVisionModel(provider);
+  }
+  if (fixed.llmTextModel && !validIds.has(fixed.llmTextModel)) {
+    fixed.llmTextModel = defaultTextModel(provider);
+  }
+  return fixed;
+}
+
 export default function SettingsScreen({ visible, onClose }: Props) {
   const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
@@ -43,7 +63,7 @@ export default function SettingsScreen({ visible, onClose }: Props) {
       setLoading(true);
       try {
         const loaded = await loadByokKeys();
-        setKeys(loaded);
+        setKeys(autoCorrectModels(loaded));
       } finally {
         setLoading(false);
       }
