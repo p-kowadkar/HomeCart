@@ -9,8 +9,6 @@ import * as Location from 'expo-location';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme/ThemeContext';
 import { darkMapStyle } from './mapStyle';
-import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabase';
 import { apiFetch } from '../lib/api';
 
 interface Store {
@@ -88,7 +86,6 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 
 export default function MapScreen({ route }: MapScreenProps) {
   const { colors, isDark } = useTheme();
-  const { session } = useAuth();
   const insets = useSafeAreaInsets();
   const initialCuisine = route?.params?.cuisine;
   const productName = route?.params?.productName;
@@ -117,17 +114,13 @@ export default function MapScreen({ route }: MapScreenProps) {
       setLoading(true);
       setErrorMsg(null);
       try {
-        const { data: { session: currentSession } } = await supabase.auth.getSession();
         const body: any = { lat, lon, cuisine: cuisine ?? null };
         if (pc && (pc.availability_breadth || (pc.preferred_store_types && pc.preferred_store_types.length))) {
           body.product_context = pc;
         }
         const r = await apiFetch('/stores/nearby', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${currentSession?.access_token}`,
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
         if (!r.ok) {
@@ -135,12 +128,26 @@ export default function MapScreen({ route }: MapScreenProps) {
           throw new Error(`Server ${r.status}: ${txt.slice(0, 100)}`);
         }
         const data = await r.json();
-        setStores(data.stores || []);
+        const newStores: Store[] = data.stores || [];
+        setStores(newStores);
         setLastFetchedCenter({ lat, lon });
         setShowSearchHere(false);
         setHasFetched(true);
-        if ((data.stores || []).length === 0) {
+        if (newStores.length === 0) {
           setErrorMsg('No stores found nearby. Try a different cuisine or pan to a denser area.');
+        } else {
+          // Auto-fit: backend searches a 10km radius, but the initial viewport is ~5km,
+          // so specialty results often land off-screen on first load. Frame them so the
+          // user sees something without having to pan + "Search this area".
+          setTimeout(() => {
+            if (!mapRef.current) return;
+            const coords = newStores.map(s => ({ latitude: s.lat, longitude: s.lon }));
+            coords.push({ latitude: lat, longitude: lon });
+            mapRef.current.fitToCoordinates(coords, {
+              edgePadding: { top: insets.top + 130, right: 60, bottom: 160, left: 60 },
+              animated: true,
+            });
+          }, 100);
         }
       } catch (e: any) {
         console.error('Stores fetch failed:', e);
@@ -150,7 +157,7 @@ export default function MapScreen({ route }: MapScreenProps) {
         setLoading(false);
       }
     },
-    [],
+    [insets.top],
   );
 
   // On mount: get location, decide whether to auto-fetch.
@@ -732,8 +739,9 @@ const styles = StyleSheet.create({
   scorePill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
   directionsBtn: { marginTop: 16, padding: 14, borderRadius: 12, alignItems: 'center' },
   loadingPill: {
+    // bottom must clear the 90px tab bar (App.tsx) — 110 leaves a 20px gap.
     position: 'absolute',
-    bottom: 32,
+    bottom: 110,
     alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
@@ -744,7 +752,7 @@ const styles = StyleSheet.create({
   },
   errorCard: {
     position: 'absolute',
-    bottom: 32,
+    bottom: 110,
     left: 16,
     right: 16,
     padding: 14,
@@ -753,7 +761,7 @@ const styles = StyleSheet.create({
   },
   countPill: {
     position: 'absolute',
-    bottom: 32,
+    bottom: 110,
     alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',

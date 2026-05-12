@@ -2,10 +2,33 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 
+// Mirrors the `profiles` table in app/migrations/001_initial_schema.sql.
+// All fields are optional because the trigger inserts a near-empty row on signup
+// and onboarding fills the rest, so any field can be unset at read time.
+export interface Profile {
+  id?: string;
+  full_name?: string;
+  home_country?: string;
+  home_region?: string;
+  home_cuisines?: string[];
+  repertoire?: string[];
+  preferred_language?: string;
+  dietary_preferences?: string[];
+  allergies?: string[];
+  cooking_confidence?: number;
+  home_lat?: number;
+  home_lng?: number;
+  home_city?: string;
+  onboarding_completed?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
 type AuthContextType = {
   session: Session | null;
   user: User | null;
-  profile: any | null | undefined;
+  // undefined = still loading; null = fetch failed; {} = signed in but no profile row yet.
+  profile: Profile | null | undefined;
   loading: boolean;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -16,7 +39,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<any | null | undefined>(undefined);
+  const [profile, setProfile] = useState<Profile | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

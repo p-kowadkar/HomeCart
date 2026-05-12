@@ -29,21 +29,8 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", os.environ.get("SUPABASE_KEY", ""))
 GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 
-# LLM gateway configuration. Default to OpenRouter (the OpenAI-compatible unified API)
-# because it lets us call Claude with our own credits today and trivially add OpenAI /
-# direct-Anthropic backends later for BYOK. Per-request user overrides (BYOK) can supply
-# their own key via the X-User-LLM-Key header; the request-level value takes precedence
-# over the env-level default.
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
-LLM_API_KEY = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("LLM_API_KEY", "")
-LLM_VISION_MODEL = os.environ.get("LLM_VISION_MODEL", "anthropic/claude-sonnet-4.6")
-LLM_TEXT_MODEL = os.environ.get("LLM_TEXT_MODEL", "anthropic/claude-haiku-4.5")
-# OpenRouter likes (but does not require) these headers for analytics + leaderboard listing.
-LLM_APP_REFERRER = os.environ.get("LLM_APP_REFERRER", "https://homecart.app")
-LLM_APP_TITLE = os.environ.get("LLM_APP_TITLE", "HomeCart")
-
-# Legacy: keep ANTHROPIC_API_KEY around for fallback / future BYOK Anthropic provider path.
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+# All LLM routing (model defaults, BYOK key prefix detection, parameter normalization)
+# is owned by providers.py. Don't reintroduce LLM_* env reads here — they'll drift.
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -204,32 +191,18 @@ def _enforce_daily_quota(user_id: Optional[str], kind: str) -> None:
 
 
 def parse_json_from_response(text: str) -> dict:
-    """Strip markdown fences and parse JSON."""
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-    text = text.strip()
-    return json.loads(text)
+    """Extract a JSON object from an LLM response.
 
-
-def lookup_equivalence(detected_product: str, home_cuisines: list[str]) -> Optional[dict]:
-    """Try to find a curated match before calling LLM."""
-    if not detected_product:
-        return None
-    product_lower = detected_product.lower()
-    for cuisine in home_cuisines:
-        # "India (Karnataka)" -> "India"
-        cuisine_clean = cuisine.split(" (")[0]
-        try:
-            results = supabase.table("equivalences").select("*").eq("home_cuisine", cuisine_clean).execute()
-            for row in results.data:
-                if row["us_equivalent"].lower() in product_lower or product_lower in row["us_equivalent"].lower():
-                    return row
-        except Exception:
-            continue
-    return None
+    LLMs occasionally wrap output in ```json fences, include a preamble, or trail
+    a closing fence. Slicing on the outermost braces survives all of those without
+    relying on a fragile fence-split.
+    """
+    text = (text or "").strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise json.JSONDecodeError("No JSON object found in response", text, 0)
+    return json.loads(text[start:end + 1])
 
 
 # ============================
@@ -368,7 +341,7 @@ Output ONLY valid JSON (no preamble, no markdown):
   "ingredients": [
     {{
       "original_ingredient": "<home name>",
-      "us_equivalent_product": "<closest US product>",
+      "us_equivalent_product": "<SHORT US product name, MAX 6 words, no parentheticals, no examples list — e.g. 'Sun Noodles fresh ramen' or 'Gekkeikan dry sake' or 'whole milk ricotta'. This text shows in a single-line UI banner.>",
       "us_brand": "<specific brand or null>",
       "match_score": <0-100>,
       "aisle_location": "<aisle hint>",
@@ -431,7 +404,16 @@ Output ONLY valid JSON (no preamble, no markdown):
 
 
 @app.get("/profile/{user_id}")
-async def get_profile(user_id: str):
+async def get_profile(
+    user_id: str,
+    auth_user_id: Optional[str] = Depends(get_user_id),
+):
+    # Backend runs with SUPABASE_SERVICE_KEY which bypasses RLS, so we have to
+    # enforce ownership in code — otherwise any caller can read any profile by UUID.
+    if not auth_user_id:
+        raise HTTPException(401, "Authentication required")
+    if auth_user_id != user_id:
+        raise HTTPException(403, "Forbidden")
     response = supabase.table("profiles").select("*").eq("id", user_id).execute()
     return response.data[0] if response.data else {"error": "Profile not found"}
 

@@ -4,9 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabase';
 import { useTheme } from '../theme/ThemeContext';
-import { apiFetch } from '../lib/api';
+import { apiFetchJson, QuotaExceededError } from '../lib/api';
 
 type ScanResult = {
   detected_product: string;
@@ -66,13 +65,9 @@ export default function MagicLensScreen({ navigation }: { navigation?: any }) {
       }
       setCapturedImage(`data:image/jpeg;base64,${photo.base64}`);
 
-      const { data: { session } } = await supabase.auth.getSession();
-      const response = await apiFetch('/scan', {
+      const data = await apiFetchJson('/scan', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           image_base64: photo.base64,
           user_profile: {
@@ -84,26 +79,16 @@ export default function MagicLensScreen({ navigation }: { navigation?: any }) {
           },
         }),
       });
-
-      if (response.status === 429) {
-        const body = await response.json().catch(() => ({}));
-        const detail = body?.detail || {};
+      setResult(data);
+    } catch (err: any) {
+      if (err instanceof QuotaExceededError) {
         Alert.alert(
           'Daily limit reached',
-          detail.message ||
-            `You've used your ${detail.limit || 10} free scans today. ` +
-            'Open the Profile tab → Settings to add your own LLM key for unlimited use.',
+          err.message + ' Open the Profile tab → Settings to add your own LLM key for unlimited use.',
           [{ text: 'Got it' }],
         );
         return;
       }
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`API error: ${errText}`);
-      }
-      const data = await response.json();
-      setResult(data);
-    } catch (err: any) {
       console.error('Scan error:', err);
       Alert.alert('Scan Failed', err.message || 'Try again');
     } finally {

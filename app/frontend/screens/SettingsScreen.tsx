@@ -254,8 +254,8 @@ export default function SettingsScreen({ visible, onClose }: Props) {
               </TouchableOpacity>
             </Section>
 
-            <Section title="Tavily (optional)" icon="magnify"
-              description="Web search fallback when Google Places returns nothing useful. 1000 free credits/month."
+            <Section title="Tavily (coming soon)" icon="magnify"
+              description="Planned: web search fallback when Google Places returns nothing useful. Storing a key now is harmless — it will be used once the backend integration ships."
               colors={colors}>
               <KeyInput
                 value={keys.tavilyKey || ''}
@@ -270,8 +270,8 @@ export default function SettingsScreen({ visible, onClose }: Props) {
               </TouchableOpacity>
             </Section>
 
-            <Section title="Firecrawl (optional)" icon="fire"
-              description='Scrape "where to buy" pages from supermarket websites to enrich scans. 500 free credits.'
+            <Section title="Firecrawl (coming soon)" icon="fire"
+              description='Planned: scrape "where to buy" pages from supermarket websites to enrich scans. Storing a key now is harmless — it will be used once the backend integration ships.'
               colors={colors}>
               <KeyInput
                 value={keys.firecrawlKey || ''}

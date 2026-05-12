@@ -3,9 +3,8 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabase';
 import { useTheme } from '../theme/ThemeContext';
-import { apiFetch } from '../lib/api';
+import { apiFetchJson, QuotaExceededError } from '../lib/api';
 
 type Ingredient = {
   original_ingredient: string;
@@ -36,13 +35,9 @@ export default function ListScreen({ navigation, route }: { navigation?: any; ro
     if (!target) return;
     setLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const r = await apiFetch('/recipe', {
+      const data = await apiFetchJson('/recipe', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           dish_name: target,
           user_profile: {
@@ -54,24 +49,18 @@ export default function ListScreen({ navigation, route }: { navigation?: any; ro
           },
         }),
       });
-      if (r.status === 429) {
-        const body = await r.json().catch(() => ({}));
-        const detail = body?.detail || {};
-        Alert.alert(
-          'Daily limit reached',
-          detail.message ||
-            `You've used your ${detail.limit || 3} free recipe imports today. ` +
-            'Open the Profile tab → Settings to add your own LLM key for unlimited use.',
-          [{ text: 'Got it' }],
-        );
-        return;
-      }
-      if (!r.ok) throw new Error(await r.text());
-      const data = await r.json();
       setIngredients(data.ingredients || []);
       setDishName(data.dish_name || target);
       setDish('');
     } catch (err: any) {
+      if (err instanceof QuotaExceededError) {
+        Alert.alert(
+          'Daily limit reached',
+          err.message + ' Open the Profile tab → Settings to add your own LLM key for unlimited use.',
+          [{ text: 'Got it' }],
+        );
+        return;
+      }
       Alert.alert('Recipe Import Failed', err.message);
     } finally {
       setLoading(false);

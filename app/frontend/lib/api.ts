@@ -33,9 +33,14 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
     supabase.auth.getSession(),
   ]);
 
-  const userId = sessionRes.data.session?.user?.id;
+  const session = sessionRes.data.session;
+  const userId = session?.user?.id;
 
-  const headers: Record<string, string> = { 'Bypass-Tunnel-Reminder': '1' };
+  const headers: Record<string, string> = {};
+  // ngrok's free-tier interstitial blocks unsigned requests without this header.
+  // Only relevant during local LAN/tunnel dev; production talks straight to Render.
+  if (__DEV__) headers['Bypass-Tunnel-Reminder'] = '1';
+  if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`;
   if (keys.llmKey) headers['X-User-LLM-Key'] = keys.llmKey;
   if (keys.llmVisionModel) headers['X-User-LLM-Vision-Model'] = keys.llmVisionModel;
   if (keys.llmTextModel) headers['X-User-LLM-Text-Model'] = keys.llmTextModel;
