@@ -13,9 +13,18 @@ Built as a hackathon project (the team won 🥇) and now being polished into a r
 - **🔍 Magic Lens** — point your camera at any US grocery product. Claude vision reads the label, returns a "cultural equivalent" rooted in your home cuisine, a match score, and a *real version* you'd ideally want from a specialty store.
 - **📒 Recipe Importer** — type a dish ("biryani", "pasta carbonara"). HomeCart returns 8–15 ingredients each with US equivalents, aisle hints, match scores, and `availability_breadth` classification (mainstream vs specialty).
 - **🗺️ Cultural Map** — Google Places-backed map with cuisine filters and product-aware ranking. Specialty-only products (Alphonso mango, fresh paneer) show only ethnic stores; mainstream products (cauliflower, chicken) show closest mainstream + specialty mix. Recipe-coverage view ranks stores by ingredients-covered (e.g., "Patel Brothers — 13/15 items").
-- **🔑 BYOK (Bring Your Own Key)** — plug your own OpenRouter / OpenAI / Anthropic key for LLM calls, your own GCP key for Maps/Places, optional Tavily and Firecrawl keys. Keys live in hardware-backed secure storage (Android Keystore / iOS Keychain) and never persist on the backend.
+- **🔑 BYOK (Bring Your Own Key)** — plug your own OpenRouter / OpenAI / Anthropic key for LLM calls. Provider auto-detected from key prefix (`sk-or-v1-` → OpenRouter, `sk-ant-` → Anthropic, `sk-` → OpenAI). Keys live in hardware-backed secure storage (Android Keystore) and never persist on the backend — they're only forwarded as headers on the specific call that needs them. Maps is operator-managed (quota-capped) so users only manage one key.
 - **🌑 Dark mode by default**, theme-aware throughout.
 - **Android sideload** via EAS — install from a URL, no Play Store needed.
+
+---
+
+## Demo
+
+| Personalized home | Magic Lens scan | Recipe importer | Cross-feature map |
+|---|---|---|---|
+| ![Home screen with cuisine-aware welcome](Reference_pics/Home.jpeg) | ![Magic Lens result with cultural translation](Reference_pics/scan-item.jpeg) | ![Recipe importer with parsed ingredients](Reference_pics/Recipe.jpeg) | ![Map showing stores for a specific ingredient](Reference_pics/Find-item.jpeg) |
+| Cuisine flag, hero CTA, profile snapshot | "Avocado Oil" → match score + "the real thing" + AI tip | "Biryani" → 14 ingredients with brands, aisles, scores | Tap a scan result → map auto-fits to stores carrying it |
 
 ---
 
